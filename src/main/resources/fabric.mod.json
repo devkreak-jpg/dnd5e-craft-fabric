@@ -1,0 +1,38 @@
+{
+	"schemaVersion": 1,
+	"id": "dnd-5e-craft",
+	"version": "${version}",
+	"name": "DnD 5e Craft",
+	"description": "This is an example description! Tell everyone what your mod is about!",
+	"authors": [
+		"Me!"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/dnd-5e-craft/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.example.DnD5eCraft"
+		],
+		"client": [
+			"com.example.client.DnD5eCraftClient"
+		]
+	},
+	"mixins": [
+		"dnd-5e-craft.mixins.json",
+		{
+			"config": "dnd-5e-craft.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~1.20.1",
+		"java": ">=17",
+		"fabric-api": "*"
+	}
+}
