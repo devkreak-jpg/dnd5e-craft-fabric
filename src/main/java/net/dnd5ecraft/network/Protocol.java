@@ -26,7 +26,7 @@ public final class Protocol {
     public static final int MAX_SPELL_TARGETS = 16;
     public static final int MAX_UPDATE = 180_000;
 
-    public enum Update { STATE, SHEET, ROLL, PING, DIALOGUE, DIALOGUE_END, NPC, ZONE, DRAFT_ROLL, NOTICE, DAMAGE, PARTY, CINEMATIC_BANNER, PASSIVE_DETECTION_GLINT }
+    public enum Update { STATE, SHEET, ROLL, PING, DIALOGUE, DIALOGUE_END, NPC, ZONE, DRAFT_ROLL, NOTICE, DAMAGE, PARTY, CINEMATIC_BANNER, PASSIVE_DETECTION_GLINT, TABLETOP_READY, TABLETOP_RESULT, ROLL_PROMPT, PROMPT_END, DIALOGUE_ROLL, CONCENTRATION, SHORT_REST }
     public enum AbilityMethod { POINT_BUY, STANDARD_ARRAY, ROLLED }
 
     public record Creature(UUID id, String name, int team, int initiative, Cell cell, int hp, int maxHp,

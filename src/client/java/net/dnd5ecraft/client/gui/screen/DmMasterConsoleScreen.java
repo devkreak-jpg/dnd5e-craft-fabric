@@ -7,6 +7,8 @@ import net.dnd5ecraft.client.ClientActions;
 import net.dnd5ecraft.rules.spells.AoEGeometry;
 import net.dnd5ecraft.client.ClientDndState;
 import net.dnd5ecraft.client.ClientPacketHandlers;
+import net.dnd5ecraft.client.gui.hud.CombatHudOverlay;
+import net.dnd5ecraft.network.TabletopText;
 import net.dnd5ecraft.combat.EncounterDifficultyCalculator;
 import net.dnd5ecraft.combat.GridMovementTracker.Cell;
 import net.dnd5ecraft.dialogue.NpcAttitude;
@@ -29,6 +31,7 @@ public final class DmMasterConsoleScreen extends DndScreen {
     private EncounterDifficultyCalculator.Result difficulty;
     private AoEGeometry shape = AoEGeometry.CONE;
     private boolean lastDm;
+    private boolean lastTabletop;
     private boolean showParty;
     private int partyPage;
     private List<net.dnd5ecraft.network.Protocol.PartyMember> lastParty = List.of();
@@ -55,6 +58,7 @@ public final class DmMasterConsoleScreen extends DndScreen {
         int second = x + col + 6, third = second + col + 6;
         boolean op = ClientDndState.state().operator();
         lastDm = ClientDndState.state().dm();
+        lastTabletop = ClientDndState.tabletop();
         button(text("dm.start"), x, top + 28, col, () -> ClientPacketHandlers.send(Action.START_COMBAT)).active = op;
         button(text("dm.stop"), second, top + 28, col, () -> ClientPacketHandlers.send(Action.STOP_COMBAT)).active = op;
         button(text("dm.toggle"), third, top + 28, col, () -> ClientPacketHandlers.send(Action.DM_MODE)).active = op;
@@ -77,6 +81,9 @@ public final class DmMasterConsoleScreen extends DndScreen {
         edit("dm.levels", levels, x, top + 115, col, 64).setResponder(value -> levels = value);
         edit("dm.ratings", monsters, second, top + 115, col, 128).setResponder(value -> monsters = value);
         button(text("dm.assess"), third, top + 115, col, this::assess);
+        pill(text("tabletop.dm_title"), x, top + 138, col * 2 + 6, 18, false, () -> {
+            if (ClientPacketHandlers.send(Action.PARTY)) minecraft.setScreen(new DmRollRequestScreen(this));
+        }).active = op && ClientDndState.tabletop();
         button(text("dm.party"), third, top + 138, col, () -> {
             if (ClientPacketHandlers.send(Action.PARTY)) { showParty = true; partyPage = 0; rebuild(); }
         }).active = op;
@@ -92,7 +99,7 @@ public final class DmMasterConsoleScreen extends DndScreen {
         if (showParty && !lastParty.equals(ClientDndState.party())) {
             lastParty = ClientDndState.party();
             rebuild();
-        } else if (!showParty && lastDm != ClientDndState.state().dm()) rebuild();
+        } else if (!showParty && (lastDm != ClientDndState.state().dm() || lastTabletop != ClientDndState.tabletop())) rebuild();
     }
 
     private void assess() {
@@ -128,6 +135,21 @@ public final class DmMasterConsoleScreen extends DndScreen {
                     x, top + 163, innerWidth(), GOLD);
             var t = difficulty.thresholds();
             clipped(g, font, text("dm.thresholds", t.easy(), t.medium(), t.hard(), t.deadly()), x, top + 178, innerWidth(), MUTED);
+        }
+        var results = ClientDndState.tabletopResults().stream()
+                .filter(roll -> minecraft.player.getUUID().equals(roll.card().requestedBy())).toList();
+        int from = Math.max(0, results.size() - 3);
+        int feedY = top + 195;
+        for (int i = from; i < results.size() && feedY + 10 < bottom() - 57; i++, feedY += 10) {
+            clipped(g, font, TabletopText.line(results.get(i).card()), x, feedY, innerWidth(), TEXT);
+        }
+    }
+
+    @Override protected void foreground(GuiGraphics graphics, int mouseX, int mouseY) {
+        var combat = ClientDndState.combat();
+        if (!showParty && combat != null && panelHeight >= 280) {
+            CombatHudOverlay.initiative(graphics, font, combat, left + 12, bottom() - 64,
+                    innerWidth(), mouseX, mouseY, true);
         }
     }
 }

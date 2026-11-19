@@ -11,6 +11,7 @@ import net.dnd5ecraft.network.ModPackets;
 import net.dnd5ecraft.network.PacketCodec;
 import net.dnd5ecraft.network.PacketPolicy.Action;
 import net.dnd5ecraft.network.Protocol;
+import net.dnd5ecraft.network.TabletopCodec;
 import net.dnd5ecraft.network.Protocol.Update;
 import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.entity.BestiaryPreset;
@@ -47,6 +48,7 @@ public final class ClientPacketHandlers {
         });
         receive(ModPackets.UPDATE, false);
         receive(ModPackets.TIMED_UPDATE, true);
+        receive(ModPackets.TABLETOP, false);
     }
 
     private static void reset() {
@@ -129,6 +131,36 @@ public final class ClientPacketHandlers {
                     if (open) openSheet();
                 };
             }
+            case TABLETOP_READY -> ignored -> ClientDndState.tabletopReady();
+            case TABLETOP_RESULT -> {
+                var card = TabletopCodec.card(buf);
+                yield ignored -> ClientDndState.tabletopResult(card);
+            }
+            case ROLL_PROMPT -> {
+                var prompt = TabletopCodec.prompt(buf);
+                yield ignored -> ClientDndState.prompt(prompt);
+            }
+            case PROMPT_END -> {
+                var id = buf.readUUID();
+                yield ignored -> ClientDndState.endPrompt(id);
+            }
+            case SHORT_REST -> {
+                boolean active = buf.readBoolean();
+                yield ignored -> ClientDndState.shortRest(active);
+            }
+            case CONCENTRATION -> {
+                var active = new java.util.HashMap<java.util.UUID, String>();
+                int count = net.dnd5ecraft.network.PacketPolicy.count(buf.readVarInt(), Protocol.MAX_COMBATANTS);
+                for (int i = 0; i < count; i++) active.put(buf.readUUID(), buf.readUtf(64));
+                yield ignored -> ClientDndState.concentration(active);
+            }
+            case DIALOGUE_ROLL -> {
+                var token = buf.readUUID();
+                var card = TabletopCodec.card(buf);
+                yield client -> {
+                    if (client.screen instanceof DialogueScreen screen && screen.token().equals(token)) screen.showRoll(card);
+                };
+            }
             case DRAFT_ROLL -> {
                 var rolled = readList(buf, 6, FriendlyByteBuf::readVarInt);
                 yield client -> {
@@ -148,12 +180,16 @@ public final class ClientPacketHandlers {
             case DIALOGUE -> {
                 var dialogue = new Protocol.Dialogue(buf.readUUID(), buf.readUtf(80), buf.readUtf(1024),
                         readEnum(buf, NpcAttitude.class), readList(buf, 12, PacketCodec::dialogueOption));
-                yield client -> client.setScreen(new DialogueScreen(dialogue));
+                yield client -> {
+                    if (!(client.screen instanceof DialogueScreen screen && screen.queueBranch(dialogue))) {
+                        client.setScreen(new DialogueScreen(dialogue));
+                    }
+                };
             }
             case DIALOGUE_END -> {
                 var token = buf.readUUID();
                 yield client -> {
-                    if (client.screen instanceof DialogueScreen screen && screen.token().equals(token)) client.setScreen(null);
+                    if (client.screen instanceof DialogueScreen screen && screen.token().equals(token) && !screen.queueBranch(null)) client.setScreen(null);
                 };
             }
             case NPC -> {

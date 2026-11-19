@@ -11,6 +11,10 @@ import net.dnd5ecraft.rules.ability.AbilityCheckEngine.RollMode;
 import net.dnd5ecraft.rules.ability.DiceRoller;
 import net.dnd5ecraft.rules.ability.PassiveSenseTracker;
 import net.dnd5ecraft.rules.ability.Skill;
+import net.dnd5ecraft.rules.ability.TabletopRolls;
+import net.dnd5ecraft.rules.ability.TabletopRolls.Check;
+import net.dnd5ecraft.rules.ability.TabletopRolls.Options;
+import net.dnd5ecraft.rules.ability.TabletopRolls.Outcome;
 import net.dnd5ecraft.rules.character.CharacterSheetData;
 import net.dnd5ecraft.rules.character.ClassType;
 import net.dnd5ecraft.rules.character.PlayerSheetStorage;
@@ -75,7 +79,22 @@ public final class PlayerRules {
                 result.kept().toString(), result.modifier(), result.total()));
     }
 
-    public static void rest(ServerPlayer player, boolean longRest) {
+    public static RollMode tabletopMode(ServerPlayer player, Check check, Options options) {
+        var sheet = PlayerSheets.get(player).orElse(null);
+        boolean disadvantage = TabletopRolls.disadvantaged(sheet, check.kind());
+        if (options.inspiration()) {
+            if (sheet == null || !sheet.resources().inspiration()) throw new IllegalStateException("Inspiration is unavailable");
+            if (TacticalCombat.isLocked(player)) TacticalCombat.require(player).spendTabletopInspiration(player.getUUID());
+            PlayerSheets.set(player, sheet.withResources(sheet.resources().withInspiration(false)));
+        }
+        return TabletopRolls.checkMode(options.mode(), options.inspiration(), disadvantage);
+    }
+
+    public static boolean lucky(ServerPlayer player) { return PlayerSheets.get(player).map(PlayerRules::lucky).orElse(false); }
+
+    public static void rest(ServerPlayer player, boolean longRest) { rest(player, longRest, true); }
+
+    public static void rest(ServerPlayer player, boolean longRest, boolean spendDie) {
         requireDowntime(player);
         var sheet = PlayerSheets.getOrCreate(player);
         if (sheet.deathSaves().state() != DeathSaveTracker.State.CONSCIOUS) {
@@ -88,12 +107,32 @@ public final class PlayerRules {
                 .map(java.util.Map.Entry::getKey).max(java.util.Comparator.comparingInt(ClassType::hitDie));
         boolean nourished = player.getFoodData().getFoodLevel() >= 6;
         var after = longRest ? sheet.longRest(nourished)
-                : sheet.shortRest(sheet.hitPoints().current() < sheet.hitPoints().maximum() ? die : Optional.empty(), dice(player));
+                : sheet.shortRest(spendDie && sheet.hitPoints().current() < sheet.hitPoints().maximum() ? die : Optional.empty(), dice(player));
         if (!longRest) after = arcaneRecovery(after);
         PlayerSheets.set(player, after);
         storage.recordRest(player.getUUID(), now, longRest);
         player.setHealth(Math.max(1, after.hitPoints().current()));
         ModPackets.notice(player, Component.translatable(longRest ? "dnd-5e-craft.rest.long_done" : "dnd-5e-craft.rest.short_done"));
+    }
+
+    public static Outcome spendHitDie(ServerPlayer player) {
+        requireDowntime(player);
+        var sheet = PlayerSheets.getOrCreate(player);
+        if (sheet.deathSaves().state() != DeathSaveTracker.State.CONSCIOUS || sheet.exhaustion().dead()
+                || sheet.hitPoints().current() >= sheet.hitPoints().maximum()) {
+            throw new IllegalStateException("A conscious character must be injured to spend a hit die");
+        }
+        var type = sheet.resources().hitDice().entrySet().stream().filter(entry -> entry.getValue() > 0)
+                .map(java.util.Map.Entry::getKey).max(java.util.Comparator.comparingInt(ClassType::hitDie))
+                .orElseThrow(() -> new IllegalStateException("No hit dice remain"));
+        int roll = dice(player).applyAsInt(type.hitDie());
+        int con = Ability.modifier(sheet.score(Ability.CONSTITUTION));
+        int total = Math.max(0, roll + con);
+        var hp = sheet.hitPoints().heal(total);
+        PlayerSheets.set(player, sheet.withCombatState(hp, sheet.conditions(), sheet.deathSaves())
+                .withResources(sheet.resources().spendHitDie(type)));
+        player.setHealth(Math.max(1, hp.current()));
+        return new Outcome(java.util.List.of(roll), roll, con, total, type.hitDie(), RollMode.NORMAL, false);
     }
 
     private static CharacterSheetData arcaneRecovery(CharacterSheetData sheet) {

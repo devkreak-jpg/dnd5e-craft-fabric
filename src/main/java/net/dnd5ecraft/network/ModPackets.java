@@ -63,6 +63,7 @@ public final class ModPackets {
     public static final ResourceLocation REQUEST = Dnd5eCraftMod.id("request");
     public static final ResourceLocation UPDATE = Dnd5eCraftMod.id("update");
     public static final ResourceLocation TIMED_UPDATE = Dnd5eCraftMod.id("timed_update");
+    public static final ResourceLocation TABLETOP = Dnd5eCraftMod.id("tabletop");
     private static final Map<ServerGamePacketListenerImpl, PacketPolicy.RateLimit> LIMITS = new ConcurrentHashMap<>();
     private static final PlayerSessionStore<Session> SESSIONS = new PlayerSessionStore<>();
 
@@ -118,9 +119,11 @@ public final class ModPackets {
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             LIMITS.remove(handler);
             SESSIONS.remove(handler.player.getUUID());
+            TabletopPackets.disconnect(handler.player);
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             SESSIONS.clear();
+            TabletopPackets.clear();
             LIMITS.clear();
         });
         ServerPlayerEvents.COPY_FROM.register((previous, current, alive) -> session(current).invalidateSnapshot());
@@ -140,6 +143,7 @@ public final class ModPackets {
             for (ServerPlayer player : players) {
                 if (supports(player)) {
                     tickRitual(player);
+                    TabletopPackets.tick(player);
                     sync(player);
                 }
             }
@@ -148,7 +152,38 @@ public final class ModPackets {
 
     private static Consumer<ServerPlayer> decode(Action action, FriendlyByteBuf buf) {
         return switch (action) {
-            case SYNC -> player -> session(player).invalidateSnapshot();
+            case SYNC -> player -> {
+                session(player).invalidateSnapshot();
+                TabletopPackets.resync(player);
+            };
+            case TABLETOP_ROLL -> {
+                var check = TabletopCodec.check(buf);
+                var options = TabletopCodec.options(buf);
+                boolean power = buf.readBoolean();
+                yield player -> TabletopPackets.roll(player, check, options, power);
+            }
+            case DM_ROLL_REQUEST -> {
+                UUID target = buf.readBoolean() ? buf.readUUID() : null;
+                var check = TabletopCodec.check(buf);
+                var mode = readEnum(buf, net.dnd5ecraft.rules.ability.AbilityCheckEngine.RollMode.class);
+                int dc = buf.readVarInt();
+                boolean secret = buf.readBoolean();
+                yield player -> TabletopPackets.request(player, target, check, mode, dc, secret);
+            }
+            case DM_ROLL_ANSWER -> {
+                UUID prompt = buf.readUUID();
+                yield player -> TabletopPackets.answer(player, prompt);
+            }
+            case TABLETOP_CHOOSE -> {
+                UUID token = buf.readUUID();
+                String id = buf.readUtf(64);
+                var options = TabletopCodec.options(buf);
+                yield player -> {
+                    TabletopPackets.require(player);
+                    if (!DialogueSessions.choose(player, token, id, options)) throw new IllegalStateException("Dialogue choice expired");
+                };
+            }
+            case TABLETOP_REST -> TabletopPackets::startRest;
             case ROLL -> PhysicalD20Item::roll;
             case REQUEST_ROLL -> {
                 boolean save = buf.readBoolean();
@@ -405,6 +440,7 @@ public final class ModPackets {
     private static void playerChangedWorld(ServerPlayer player, ServerLevel origin, Session session) {
         TacticalCombat.playerChanged(player, origin);
         if (origin != player.serverLevel()) pauseRitual(session, origin);
+        TabletopPackets.worldChanged(player);
         session.invalidateSnapshot();
     }
 
@@ -662,6 +698,7 @@ public final class ModPackets {
 
     private static void sync(ServerPlayer player) {
         if (!supports(player)) return;
+        TabletopPackets.sync(player);
         var session = session(player);
         boolean timed = ServerPlayNetworking.canSend(player, TIMED_UPDATE);
         var combat = TacticalCombat.networkView(player);
@@ -689,11 +726,11 @@ public final class ModPackets {
         else player.displayClientMessage(message, true);
     }
 
-    private static void send(ServerPlayer player, Update kind, Consumer<FriendlyByteBuf> write) {
+    static void send(ServerPlayer player, Update kind, Consumer<FriendlyByteBuf> write) {
         send(player, UPDATE, kind, write);
     }
 
-    private static void send(ServerPlayer player, ResourceLocation channel, Update kind, Consumer<FriendlyByteBuf> write) {
+    static void send(ServerPlayer player, ResourceLocation channel, Update kind, Consumer<FriendlyByteBuf> write) {
         if (player.connection == null || !ServerPlayNetworking.canSend(player, channel)) return;
         FriendlyByteBuf buf = PacketByteBufs.create();
         buf.writeVarInt(Protocol.VERSION);

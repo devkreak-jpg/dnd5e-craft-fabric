@@ -2,6 +2,16 @@ package net.dnd5ecraft.client;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import net.dnd5ecraft.network.TabletopCodec.Card;
+import net.dnd5ecraft.network.TabletopCodec.Prompt;
+import net.dnd5ecraft.rules.ability.AbilityCheckEngine.RollMode;
+import net.dnd5ecraft.rules.ability.TabletopRolls.Kind;
+import net.dnd5ecraft.rules.ability.TabletopRolls.Weapon;
+import net.dnd5ecraft.combat.PlayerWeaponProfiles;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.item.ItemStack;
 import net.dnd5ecraft.combat.GridMovementTracker.Cell;
 import net.dnd5ecraft.network.Protocol;
 import net.dnd5ecraft.rules.character.CharacterSheetData;
@@ -25,6 +35,64 @@ public final class ClientDndState {
     private static long reactionDeadline;
     private static long shakeUntil;
     private static int shakeStrength;
+
+    public record TabletopResult(Card card, long time) {}
+    private record WeaponHit(Weapon weapon, ItemStack item, boolean critical, boolean powered) {}
+    private static final List<TabletopResult> results = new ArrayList<>();
+    private static RollMode mode = RollMode.NORMAL;
+    private static boolean whisper;
+    private static boolean inspiration;
+    private static boolean tabletop;
+    private static boolean shortRest;
+    private static Prompt prompt;
+    private static WeaponHit lastHit;
+    private static Map<UUID, String> concentration = Map.of();
+
+    public static RollMode rollMode() { return mode; }
+    public static void rollMode(RollMode next) { mode = next; }
+    public static boolean whisper() { return whisper; }
+    public static void whisper(boolean next) { whisper = next; }
+    public static boolean inspiration() { return inspiration && sheet != null && sheet.resources().inspiration(); }
+    public static void inspiration(boolean next) { inspiration = next; }
+    public static boolean tabletop() { return tabletop; }
+    public static boolean shortRest() { return shortRest; }
+    public static Prompt prompt() { return prompt; }
+    public static String concentration(UUID id) { return concentration.get(id); }
+
+    static void tabletopReady() { tabletop = true; concentration = Map.of(); }
+    static void shortRest(boolean next) { shortRest = next; }
+    static void prompt(Prompt next) { prompt = next; }
+    static void endPrompt(UUID id) { if (prompt != null && prompt.id().equals(id)) prompt = null; }
+    static void concentration(Map<UUID, String> next) { concentration = Map.copyOf(next); }
+
+    public static List<TabletopResult> tabletopResults() { return List.copyOf(results); }
+    public static TabletopResult latestTabletop() { return results.isEmpty() ? null : results.get(results.size() - 1); }
+    private static boolean matchesHit(Weapon weapon) {
+        var player = Minecraft.getInstance().player;
+        return player != null && lastHit != null && lastHit.weapon() == weapon
+                && ItemStack.isSameItemSameTags(lastHit.item(), PlayerWeaponProfiles.equipped(player, weapon));
+    }
+
+    public static boolean critical(Weapon weapon) { return matchesHit(weapon) && lastHit.critical(); }
+    public static boolean powerDamage(Weapon weapon, boolean selected) { return matchesHit(weapon) ? lastHit.powered() : selected; }
+
+    static void tabletopResult(Card card) {
+        long now = Util.getMillis();
+        if (results.size() >= 36) results.remove(0);
+        results.add(new TabletopResult(card, now));
+        var player = Minecraft.getInstance().player;
+        if (player == null || !card.roller().equals(player.getUUID())) return;
+        player.playSound(net.minecraft.sounds.SoundEvents.BONE_BLOCK_PLACE, .45f, 1.35f);
+        if (card.check().kind() == Kind.HIT) {
+            var weapon = Weapon.valueOf(card.check().id());
+            boolean powered = sheet != null && PlayerWeaponProfiles.tabletop(player, sheet, weapon).attackBonus()
+                    - card.outcome().modifier() == 5;
+            lastHit = new WeaponHit(weapon, PlayerWeaponProfiles.equipped(player, weapon).copy(),
+                    card.outcome().kept() == 20, powered);
+        } else if (card.check().kind() == Kind.DAMAGE && lastHit != null && lastHit.weapon().name().equals(card.check().id())) {
+            lastHit = null;
+        }
+    }
 
     private ClientDndState() {}
 
@@ -90,11 +158,18 @@ public final class ClientDndState {
         party = List.of();
         draft = List.of();
         reactionDeadline = 0;
+        mode = RollMode.NORMAL;
+        whisper = inspiration = tabletop = false;
+        results.clear();
+        prompt = null;
         clearWorldEffects();
     }
 
     static void clearWorldEffects() {
         banner = null;
+        shortRest = false;
+        lastHit = null;
+        concentration = Map.of();
         dice.clear();
         pings.clear();
         notice = null;

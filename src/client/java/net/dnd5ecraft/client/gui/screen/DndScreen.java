@@ -2,6 +2,9 @@ package net.dnd5ecraft.client.gui.screen;
 
 import java.util.function.Consumer;
 import net.dnd5ecraft.client.ClientDndState;
+import net.dnd5ecraft.client.TabletopActions;
+import net.dnd5ecraft.client.gui.theme.TabletopButton;
+import net.dnd5ecraft.client.keybind.ModKeybinds;
 import net.dnd5ecraft.client.gui.theme.DndUiTheme;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -22,7 +25,7 @@ abstract class DndScreen extends Screen {
     protected void init() {
         screenLevel = minecraft == null ? null : minecraft.level;
         panelWidth = Math.min(560, width - 16);
-        panelHeight = Math.min(315, height - 12);
+        panelHeight = Math.min(maximumHeight(), height - 12);
         left = (width - panelWidth) / 2;
         top = (height - panelHeight) / 2;
         controls();
@@ -30,11 +33,25 @@ abstract class DndScreen extends Screen {
 
     protected abstract void controls();
 
+    protected int maximumHeight() { return 315; }
+
     protected final int bottom() { return top + panelHeight; }
     protected final int innerWidth() { return panelWidth - 24; }
 
     protected final Button button(Component label, int x, int y, int w, Runnable task) {
         return addRenderableWidget(Button.builder(label, ignored -> { if (worldReady()) task.run(); }).bounds(x, y, Math.max(12, w), 18).build());
+    }
+
+    protected final TabletopButton pill(Component label, int x, int y, int w, int h, boolean selected, Runnable task) {
+        return addRenderableWidget(new TabletopButton(x, y, w, h, label, selected, ignored -> {
+            if (worldReady()) task.run();
+        }));
+    }
+
+    @Override public boolean keyPressed(int key, int scancode, int modifiers) {
+        if (worldReady() && !(getFocused() instanceof EditBox) && ModKeybinds.matchesRoll(key, scancode)
+                && TabletopActions.answerPrompt()) return true;
+        return super.keyPressed(key, scancode, modifiers);
     }
 
     protected final EditBox edit(String label, String value, int x, int y, int w, int limit) {
@@ -89,7 +106,10 @@ abstract class DndScreen extends Screen {
             g.fill(left + 11, y - 2, left + panelWidth - 11, y + 11, OBSIDIAN);
             DndUiTheme.clipped(g, font, notice.message(), left + 13, y, innerWidth() - 2, TEXT);
         }
+        foreground(g, mouseX, mouseY);
     }
+
+    protected void foreground(GuiGraphics g, int mouseX, int mouseY) {}
 
     @Override public boolean isPauseScreen() { return false; }
 }

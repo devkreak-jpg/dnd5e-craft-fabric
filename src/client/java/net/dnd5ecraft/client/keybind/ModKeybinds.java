@@ -5,6 +5,7 @@ import java.util.EnumMap;
 import net.dnd5ecraft.client.ClientActions;
 import net.dnd5ecraft.client.ClientDndState;
 import net.dnd5ecraft.client.ClientPacketHandlers;
+import net.dnd5ecraft.client.TabletopActions;
 import net.dnd5ecraft.client.gui.screen.SpellbookScreen;
 import net.dnd5ecraft.combat.ReactionWindowManager.Kind;
 import net.dnd5ecraft.network.PacketPolicy.Action;
@@ -71,7 +72,7 @@ public final class ModKeybinds {
                 if (combat != null && combat.reaction() != null && !combat.reaction().choices().isEmpty()
                         && ClientDndState.reactionRemaining() > 0) {
                     ClientActions.react(combat.reaction().choices().get(0), Screen.hasShiftDown());
-                } else if (client.screen == null) ClientPacketHandlers.send(Action.ROLL);
+                } else if (client.screen == null && !TabletopActions.answerPrompt()) ClientPacketHandlers.send(Action.ROLL);
             }
             if (client.screen != null) return;
             if (sheet.consumeClick()) ClientPacketHandlers.openSheet();
@@ -117,6 +118,8 @@ public final class ModKeybinds {
         }
         return true;
     }
+
+    public static net.minecraft.network.chat.Component rollKey() { return roll.getTranslatedKeyMessage(); }
 
     public static boolean matchesRoll(int key, int scancode) {
         return roll != null && roll.matches(key, scancode);

@@ -22,6 +22,9 @@ import static net.dnd5ecraft.client.gui.theme.DndUiTheme.*;
 public final class SpellbookScreen extends DndScreen {
     private String query = "";
     private int page;
+    private int filterLevel = -1;
+    private boolean concentrationOnly;
+    private boolean ritualOnly;
     private Spell selected;
     private int slot;
     private Pool pool = Pool.REGULAR;
@@ -35,6 +38,8 @@ public final class SpellbookScreen extends DndScreen {
 
     public SpellbookScreen() { super(text("spellbook.title")); }
 
+    @Override protected int maximumHeight() { return 380; }
+
     @Override protected void controls() {
         inCombat = ClientDndState.controlsCombatant();
         availableSpells = spellIds();
@@ -43,11 +48,26 @@ public final class SpellbookScreen extends DndScreen {
         listWidth = Math.max(85, innerWidth() / 2 - 5);
         int right = x + listWidth + 10;
         int details = innerWidth() - listWidth - 10;
-        search = edit("spellbook.search", query, x, top + 29, listWidth, 48);
+        search = edit("spellbook.search", query, x, top + 27, innerWidth(), 48);
+        search.setHint(text("spellbook.search"));
+        int filterWidth = (innerWidth() - 16) / 9;
+        for (int level = -1; level <= 5; level++) {
+            int filter = level;
+            var label = level < 0 ? text("tabletop.spell.all") : level == 0 ? text("tabletop.spell.cantrip")
+                    : net.minecraft.network.chat.Component.literal(Integer.toString(level));
+            pill(label, x + (level + 1) * (filterWidth + 2), top + 50, filterWidth, 17, filterLevel == level,
+                    () -> { filterLevel = filter; page = 0; rebuild(); });
+        }
+        pill(text("tabletop.spell.concentration_short"), x + 7 * (filterWidth + 2), top + 50, filterWidth, 17,
+                concentrationOnly, () -> { concentrationOnly = !concentrationOnly; page = 0; rebuild(); })
+                .setTooltip(net.minecraft.client.gui.components.Tooltip.create(text("spellbook.concentration")));
+        pill(text("tabletop.spell.ritual_short"), x + 8 * (filterWidth + 2), top + 50, filterWidth, 17,
+                ritualOnly, () -> { ritualOnly = !ritualOnly; page = 0; rebuild(); })
+                .setTooltip(net.minecraft.client.gui.components.Tooltip.create(text("spellbook.ritual")));
         var buttons = new java.util.ArrayList<Button>();
         for (int i = 0; i < rowsCount(); i++) {
             int index = i;
-            buttons.add(button(text("spellbook.none"), x, top + 53 + 20 * i, listWidth, () -> select(index)));
+            buttons.add(pill(text("spellbook.none"), x, top + 73 + 20 * i, listWidth, 18, false, () -> select(index)));
         }
         rows = List.copyOf(buttons);
         prev = button(text("previous"), x, bottom() - 25, listWidth / 2 - 2, () -> { page--; refreshList(); });
@@ -63,8 +83,9 @@ public final class SpellbookScreen extends DndScreen {
             }
             if (combat != null && selected.castingTime() != Spell.CastingTime.REACTION && selected.castingTime() != Spell.CastingTime.TEN_MINUTES) {
                 cast = button(text("spellbook.cast"), right, bottom() - 25, details, this::aim);
-            } else if (combat == null && selected.ritual()) {
-                ritual = button(text("spellbook.ritual"), right, bottom() - 25, details,
+            }
+            if (selected.ritual()) {
+                ritual = pill(text("spellbook.ritual"), right, bottom() - (cast == null ? 25 : 43), details, 17, false,
                         () -> ClientPacketHandlers.send(Action.RITUAL_START, out -> out.writeUtf(selected.id(), 64)));
             }
         }
@@ -88,7 +109,7 @@ public final class SpellbookScreen extends DndScreen {
         }
         if (ritual != null) {
             var sheet = ClientDndState.sheet();
-            ritual.active = sheet != null && SpellAccess.rituals(sheet, SpellAccess.available(sheet)).contains(selected.id());
+            ritual.active = !ClientDndState.controlsCombatant() && sheet != null && SpellAccess.rituals(sheet, SpellAccess.available(sheet)).contains(selected.id());
         }
     }
 
@@ -99,13 +120,20 @@ public final class SpellbookScreen extends DndScreen {
             int index = page * rowsCount() + i;
             var button = rows.get(i);
             button.visible = index < available.size();
-            if (button.visible) button.setMessage(text("spell." + available.get(index).id()));
+            if (button.visible) {
+                var spell = available.get(index);
+                button.setMessage(text("spell." + spell.id()));
+                ((net.dnd5ecraft.client.gui.theme.TabletopButton) button).trailing(net.minecraft.network.chat.Component.literal(
+                        (spell.concentration() ? "C " : "") + (spell.ritual() ? "R " : "") + (spell.area().isPresent() ? "◇ " : "")
+                                + spell.level()));
+                button.setTooltip(net.minecraft.client.gui.components.Tooltip.create(name("time", spell.castingTime())));
+            }
         }
         prev.active = page > 0;
         next.active = (page + 1) * rowsCount() < available.size();
     }
 
-    private int rowsCount() { return Math.max(2, (panelHeight - 95) / 20); }
+    private int rowsCount() { return Math.max(2, (panelHeight - 108) / 20); }
 
     private Set<String> spellIds() {
         var combat = ClientDndState.controlsCombatant() ? ClientDndState.combat() : null;
@@ -117,6 +145,8 @@ public final class SpellbookScreen extends DndScreen {
     private List<Spell> spells() {
         String filter = query.toLowerCase(Locale.ROOT).strip();
         return availableSpells.stream().flatMap(id -> SpellRegistry5e.find(id).stream())
+                .filter(spell -> (filterLevel < 0 || spell.level() == filterLevel)
+                        && (!concentrationOnly || spell.concentration()) && (!ritualOnly || spell.ritual()))
                 .filter(spell -> spell.id().contains(filter) || text("spell." + spell.id()).getString().toLowerCase(Locale.ROOT).contains(filter))
                 .sorted(java.util.Comparator.comparingInt(Spell::level).thenComparing(Spell::id)).toList();
     }
@@ -137,12 +167,16 @@ public final class SpellbookScreen extends DndScreen {
     private void cycleSlot() {
         var combat = ClientDndState.controlsCombatant() ? ClientDndState.combat() : null;
         if (combat == null) return;
+        int originalSlot = slot;
+        Pool originalPool = pool;
         for (int i = 0; i < 18; i++) {
             int next = (slot + (pool == Pool.PACT ? 9 : 0)) % 18;
             pool = next >= 9 ? Pool.PACT : Pool.REGULAR;
             slot = next % 9 + 1;
-            if (slot >= selected.level() && combat.slots().available(slot, pool == Pool.PACT) > 0) break;
+            if (slot >= selected.level() && combat.slots().available(slot, pool == Pool.PACT) > 0) { rebuild(); return; }
         }
+        slot = originalSlot;
+        pool = originalPool;
         rebuild();
     }
 
@@ -172,14 +206,19 @@ public final class SpellbookScreen extends DndScreen {
         int x = left + 22 + listWidth;
         int w = innerWidth() - listWidth - 10;
         if (selected == null) {
-            clipped(g, font, text(spells().isEmpty() ? "spellbook.none" : "spellbook.select"), x, top + 34, w, MUTED);
+            clipped(g, font, text(spells().isEmpty() ? "spellbook.none" : "spellbook.select"), x, top + 76, w, MUTED);
             return;
         }
-        clipped(g, font, text("spell." + selected.id()), x, top + 32, w, GOLD);
-        clipped(g, font, text("spellbook.level", selected.level(), name("school", selected.school())), x, top + 48, w, TEXT);
-        clipped(g, font, name("time", selected.castingTime()), x, top + 62, w, MUTED);
-        clipped(g, font, text("spellbook.range", selected.rangeFeet()), x, top + 76, w, TEXT);
-        if (selected.concentration()) clipped(g, font, text("spellbook.concentration"), x, top + 90, w, ARCANE);
-        if (selected.area().isPresent()) clipped(g, font, name("area", selected.area().orElseThrow().shape()), x, top + 104, w, ARCANE);
+        int detailY = top + 74;
+        panel(g, x - 3, detailY - 1, w + 3, 55, BORDER);
+        clipped(g, font, text("spell." + selected.id()), x + 3, detailY + 3, w - 6, GOLD);
+        clipped(g, font, text("spellbook.level", selected.level(), name("school", selected.school())), x + 3, detailY + 16, w - 6, TEXT);
+        clipped(g, font, name("time", selected.castingTime()), x + 3, detailY + 29, w - 6, MUTED);
+        var badges = net.minecraft.network.chat.Component.literal("");
+        if (selected.concentration()) badges.append("C  ");
+        if (selected.ritual()) badges.append("R  ");
+        if (selected.area().isPresent()) badges.append("◇ ").append(name("area", selected.area().orElseThrow().shape()));
+        if (badges.getString().isBlank()) badges.append(text("spellbook.range", selected.rangeFeet()));
+        clipped(g, font, badges, x + 3, detailY + 42, w - 6, ARCANE);
     }
 }

@@ -14,6 +14,7 @@ import net.dnd5ecraft.combat.CombatManager;
 import net.dnd5ecraft.combat.CombatantEntry;
 import net.dnd5ecraft.combat.GridMovementTracker.Cell;
 import net.dnd5ecraft.combat.MonsterAiDirector;
+import net.dnd5ecraft.combat.PlayerWeaponProfiles;
 import net.dnd5ecraft.combat.ReactionWindowManager.Kind;
 import net.dnd5ecraft.combat.TurnEconomy.Resource;
 import net.dnd5ecraft.entity.DndNpcEntity;
@@ -30,9 +31,7 @@ import net.dnd5ecraft.rules.character.ClassType;
 import net.dnd5ecraft.rules.conditions.DeathSaveTracker;
 import net.dnd5ecraft.rules.equipment.ArmorFormulaEngine;
 import net.dnd5ecraft.rules.equipment.ArmorFormulaEngine.Formula;
-import net.dnd5ecraft.rules.equipment.DamagePipeline.DamageRoll;
 import net.dnd5ecraft.rules.equipment.DamagePipeline.Defenses;
-import net.dnd5ecraft.rules.equipment.DamagePipeline.Dice;
 import net.dnd5ecraft.rules.equipment.DamageType5e;
 import net.dnd5ecraft.rules.equipment.ExhaustionLevel;
 import net.dnd5ecraft.rules.equipment.WeaponProperty;
@@ -179,6 +178,29 @@ public final class TacticalCombat {
     private static Session suspendedSession(ServerPlayer player) {
         return ACTIVE.values().stream().filter(session -> session.level.getServer() == player.getServer()
                 && session.suspendedPlayers.contains(player.getUUID())).findFirst().orElse(null);
+    }
+
+    public static Map<UUID, String> networkConcentration(ServerPlayer player) {
+        Session session = controlledSession(player);
+        if (session == null) session = suspendedSession(player);
+        if (session == null && player.hasPermissions(2) && DmMode.active(player)) session = ACTIVE.get(player.serverLevel());
+        if (session == null) return Map.of();
+        var active = new LinkedHashMap<UUID, String>();
+        for (var entry : session.state.initiativeOrder()) {
+            session.manager.concentration(entry.id()).ifPresent(spell -> active.put(entry.id(), spell.spellId()));
+        }
+        return Map.copyOf(active);
+    }
+
+    public static net.dnd5ecraft.rules.ability.TabletopRolls.Outcome rollDeathSave(ServerPlayer player,
+            RollMode mode) {
+        requireUnfrozen(player);
+        var session = session(player);
+        if (session == null) throw new IllegalStateException("No active encounter");
+        var outcome = session.manager.resolveDeathSave(player.getUUID(), mode);
+        session.synchronize();
+        session.publish();
+        return outcome;
     }
 
     public static int networkDarkvision(ServerPlayer player) {
@@ -420,6 +442,8 @@ public final class TacticalCombat {
         private record Detection(UUID viewer, UUID target, int check) {}
         private UUID pathActor;
         private Cell pendingStep;
+        private UUID deathSaveActor;
+        private long deathSaveUntil;
         private final Map<UUID, LivingEntity> entities = new LinkedHashMap<>();
         private final Set<UUID> suspendedPlayers = new java.util.HashSet<>();
         private final Map<UUID, Long> lastHazard = new LinkedHashMap<>();
@@ -457,10 +481,10 @@ public final class TacticalCombat {
             boolean requiresBothHands = WeaponStatsRegistry.findItem(mainId.getNamespace(), mainId.getPath())
                     .filter(stats -> stats.has(WeaponProperty.TWO_HANDED)).isPresent();
             if (requiresBothHands && !player.getOffhandItem().isEmpty()) main = net.minecraft.world.item.ItemStack.EMPTY;
-            attacks.add(playerAttack(main, sheet, player.getOffhandItem().isEmpty()));
+            attacks.add(PlayerWeaponProfiles.attack(main, sheet, player.getOffhandItem().isEmpty()));
             if (player.getOffhandItem().getItem() instanceof net.minecraft.world.item.TieredItem
                     || player.getOffhandItem().is(Items.TRIDENT)) {
-                attacks.add(playerAttack(player.getOffhandItem(), sheet, false));
+                attacks.add(PlayerWeaponProfiles.attack(player.getOffhandItem(), sheet, false));
             }
             var result = CombatantEntry.fromSheet(player.getUUID(), 0, initiative, cell, sheet, armorClass(player, sheet),
                     player.getArmorValue() > 0, spells, SpellAccess.rituals(sheet, spells), Set.of(), attacks, Defenses.NONE);
@@ -499,6 +523,17 @@ public final class TacticalCombat {
             if (level.getGameTime() % 20 == 0) detectHidden();
             long time = now();
             manager.tick(time);
+            UUID waiting = manager.pendingDeathSave().orElse(null);
+            if (!java.util.Objects.equals(waiting, deathSaveActor)) {
+                deathSaveActor = waiting;
+                deathSaveUntil = time + 10_000;
+            }
+            if (waiting != null && time < deathSaveUntil) {
+                synchronize();
+                publish();
+                return;
+            }
+            if (waiting != null) manager.resolveDeathSave(waiting, RollMode.NORMAL);
             var window = manager.reactionWindow();
             if (window.isPresent()) {
                 for (var offer : window.get().offers()) {
@@ -742,26 +777,6 @@ public final class TacticalCombat {
         return ArmorFormulaEngine.armorClass(armorFormula(player, sheet), sheet.score(Ability.DEXTERITY),
                 sheet.score(Ability.CONSTITUTION), sheet.score(Ability.WISDOM), player.getOffhandItem().is(Items.SHIELD),
                 sheet.feats().contains(net.dnd5ecraft.rules.character.FeatType.MEDIUM_ARMOR_MASTER));
-    }
-
-    private static CombatantEntry.Attack playerAttack(net.minecraft.world.item.ItemStack stack, CharacterSheetData sheet,
-            boolean twoHanded) {
-        var id = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem());
-        var weapon = WeaponStatsRegistry.findItem(id.getNamespace(), id.getPath()).filter(WeaponStatsRegistry.Stats::dealsDamage);
-        int strength = sheet.score(Ability.STRENGTH);
-        Ability ability = weapon.map(stats -> stats.preferredAttackAbility(strength, sheet.score(Ability.DEXTERITY))).orElse(Ability.STRENGTH);
-        int modifier = Ability.modifier(sheet.score(ability));
-        var dice = weapon.map(stats -> stats.damageDice(twoHanded)).orElseGet(() -> new Dice(0, 0));
-        var type = weapon.flatMap(WeaponStatsRegistry.Stats::damageType).orElse(DamageType5e.BLUDGEONING);
-        int flat = modifier + weapon.map(WeaponStatsRegistry.Stats::flatDamage).orElse(1);
-        boolean ranged = weapon.filter(stats -> stats.has(WeaponProperty.RANGED)).isPresent();
-        return new CombatantEntry.Attack(weapon.isPresent() ? stack.getHoverName().getString() : "Unarmed strike",
-                modifier + net.dnd5ecraft.rules.ability.ProficiencyLevel.bonusAtLevel(sheet.level()),
-                ranged ? 0 : weapon.map(WeaponStatsRegistry.Stats::meleeReachFeet).orElse(5),
-                ranged ? weapon.orElseThrow().normalRangeFeet() : 0, ranged ? weapon.orElseThrow().longRangeFeet() : 0,
-                List.of(new DamageRoll(type, dice, flat)), weapon.filter(stats -> stats.has(WeaponProperty.FINESSE)).isPresent(),
-                weapon.filter(stats -> stats.has(WeaponProperty.LIGHT)).isPresent(),
-                weapon.filter(stats -> stats.has(WeaponProperty.HEAVY)).isPresent(), ability == Ability.STRENGTH);
     }
 
     public static Cell cell(BlockPos position) { return new Cell(position.getX(), position.getY(), position.getZ()); }

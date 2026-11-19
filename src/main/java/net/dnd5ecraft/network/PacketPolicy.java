@@ -12,7 +12,9 @@ public final class PacketPolicy {
         DM_MODE(true, false), START_COMBAT(true, false), STOP_COMBAT(true, false), POSSESS(true, false),
         RELEASE(true, false), PILOT(true, false), NPC_INSPECT(true, false), NPC_SAVE(true, false), NPC_SPAWN(true, false),
         ZONE_INSPECT(true, false), ZONE_SAVE(true, false),
-        REQUEST_ROLL(false, false), REST(false, false), MANEUVER(false, true), PARTY(true, false);
+        REQUEST_ROLL(false, false), REST(false, false), MANEUVER(false, true), PARTY(true, false),
+        TABLETOP_ROLL(false, false), DM_ROLL_REQUEST(true, false), DM_ROLL_ANSWER(false, false),
+        TABLETOP_CHOOSE(false, false), TABLETOP_REST(false, false);
 
         private final boolean operator;
         private final boolean turn;

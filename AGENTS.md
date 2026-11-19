@@ -13,7 +13,7 @@ java -cp build/classes/java/main net.dnd5ecraft.rules.RulesSelfTestRunner
 ./gradlew --offline --no-daemon build --console=plain -q | tail -n 60
 ```
 
-The installable remapped artifact is `build/libs/dnd-5e-craft-1.1.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 2 includes the advanced trigger settings and sheet armor field. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
+The installable remapped artifact is `build/libs/dnd-5e-craft-1.2.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 2 includes the advanced trigger settings and sheet armor field. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
 
 ## Phase checklist
 
@@ -34,6 +34,12 @@ The phase checks cover the offline build, the dedicated-server GameTests, and th
 - `CombatManager` orchestrates turns and retains its public API. `CombatSpellZoneResolver` owns spell targeting, concentration, timed aid, and persistent zones. `CombatManeuverResolver` owns weapon attacks, martial maneuvers, and combat class features.
 - UUID-keyed network sessions retain draft rolls and synchronize the sheet and encounter after respawn or dimension travel. Encounters pause while a participant is in another dimension or waiting to respawn. Rituals keep their remaining time across a player replacement and can resume at the original casting site.
 - DM observers see a read-only initiative ribbon, and the client uses the server's reaction window duration when the optional Protocol v2 update channel is available. The Tavern Keeper, Merchant, and Town Guard have localized starter dialogue and no attacks.
+
+## v1.2 tabletop controls
+
+- Use the sheet header to set roll mode, whisper to online DMs, or spend Inspiration on the next d20. Click ability cards, skill rows, or weapon buttons to roll. Right-click a tray die to build a pool. A natural 20 on a weapon hit applies to the next damage roll for the same equipped weapon.
+- Start a short rest to spend hit dice from the sheet. Tactical maneuvers and class features continue to use server turn checks. Use the DM console to send a roll request, and press **R** to answer it.
+- The optional tabletop channel carries roll cards, prompts, and concentration details within Protocol v2. Whisper recipients are the roller and online operators. The spellbook filters available spells, and checked dialogue displays its result before advancing.
 
 ## Phase 0 files
 

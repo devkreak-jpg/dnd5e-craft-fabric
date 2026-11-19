@@ -5,6 +5,12 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.WeakHashMap;
 import net.dnd5ecraft.dialogue.DialogueNode;
+import net.dnd5ecraft.network.TabletopPackets;
+import net.dnd5ecraft.rules.ability.DiceRoller;
+import net.dnd5ecraft.rules.ability.TabletopRolls;
+import net.dnd5ecraft.rules.ability.TabletopRolls.Check;
+import net.dnd5ecraft.rules.ability.TabletopRolls.Kind;
+import net.dnd5ecraft.rules.ability.TabletopRolls.Options;
 import net.dnd5ecraft.dialogue.DialogueTree;
 import net.dnd5ecraft.dialogue.DialogueText;
 import net.dnd5ecraft.entity.DndNpcEntity;
@@ -48,6 +54,10 @@ public final class DialogueSessions {
     }
 
     public static boolean choose(ServerPlayer player, UUID token, String id) {
+        return choose(player, token, id, null);
+    }
+
+    public static boolean choose(ServerPlayer player, UUID token, String id, Options options) {
         var sessions = active(player);
         Session session = sessions.get(player.getUUID());
         if (session == null || !session.token.equals(token)) return false;
@@ -58,17 +68,31 @@ public final class DialogueSessions {
             ModPackets.endDialogue(player, token);
             return false;
         }
-        var character = PlayerSheets.get(player);
-        RollMode mode = RollMode.from(false, character.map(sheet -> sheet.exhaustion().abilityCheckDisadvantage())
-                .orElse(false));
-        DialogueTree.Selection selection = session.tree.choose(session.node, id, npc.attitudeFor(player.getUUID()),
-                skill -> character.map(sheet -> sheet.skillModifier(skill))
-                        .orElseGet(() -> Ability.modifier(10)), mode, sides -> 1 + player.getRandom().nextInt(sides));
-        selection.check().ifPresent(check -> ModPackets.notice(player, Component.translatable("dnd-5e-craft.dialogue.check",
-                check.naturalRoll(), check.total(), check.difficulty())));
-        selection.outcome().attitude().ifPresent(attitude -> npc.setAttitudeFor(player.getUUID(), attitude));
+        var choice = session.tree.node(session.node).choices().stream().filter(option -> option.id().equals(id))
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("Choice is unavailable at this node"));
+        var outcome = choice.success();
+        if (options != null && choice.check().isPresent()) {
+            var definition = choice.check().orElseThrow();
+            var check = new Check(Kind.SKILL, definition.skill().name());
+            var mode = PlayerRules.tabletopMode(player, check, options);
+            int dc = npc.attitudeFor(player.getUUID()).adjustDifficulty(definition.difficulty());
+            var roll = TabletopRolls.d20(new DiceRoller(PlayerRules.dice(player)), mode,
+                    TabletopRolls.modifier(PlayerSheets.get(player).orElse(null), check), PlayerRules.lucky(player));
+            TabletopPackets.dialogue(player, token, check, roll, dc, options.whisper());
+            if (roll.total() < dc) outcome = choice.failure();
+        } else if (choice.check().isPresent()) {
+            var character = PlayerSheets.get(player);
+            RollMode mode = RollMode.from(false, character.map(sheet -> sheet.exhaustion().abilityCheckDisadvantage()).orElse(false));
+            var selection = session.tree.choose(session.node, id, npc.attitudeFor(player.getUUID()),
+                    skill -> character.map(sheet -> sheet.skillModifier(skill)).orElseGet(() -> Ability.modifier(10)),
+                    mode, PlayerRules.dice(player));
+            selection.check().ifPresent(check -> ModPackets.notice(player, Component.translatable("dnd-5e-craft.dialogue.check",
+                    check.naturalRoll(), check.total(), check.difficulty())));
+            outcome = selection.outcome();
+        }
+        outcome.attitude().ifPresent(attitude -> npc.setAttitudeFor(player.getUUID(), attitude));
         sessions.remove(player.getUUID());
-        if (selection.outcome().next().isPresent()) enter(player, npc, session.tree, selection.outcome().next().orElseThrow());
+        if (outcome.next().isPresent()) enter(player, npc, session.tree, outcome.next().orElseThrow());
         else ModPackets.endDialogue(player, token);
         return true;
     }

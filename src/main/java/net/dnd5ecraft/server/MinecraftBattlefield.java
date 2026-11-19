@@ -25,6 +25,12 @@ final class MinecraftBattlefield implements CombatManager.Battlefield {
     }
 
     @Override
+    public boolean manualDeathSaves(CombatantEntry target) {
+        return entities.get(target.id()) instanceof net.minecraft.server.level.ServerPlayer player
+                && net.dnd5ecraft.network.TabletopPackets.supports(player);
+    }
+
+    @Override
     public boolean canOccupy(Cell cell) {
         BlockPos position = position(cell);
         if (!loaded(position) || level.isOutsideBuildHeight(position.above())) return false;

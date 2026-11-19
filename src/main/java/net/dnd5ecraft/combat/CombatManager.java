@@ -30,6 +30,8 @@ import net.dnd5ecraft.entity.BestiaryTurnState;
 import net.dnd5ecraft.rules.ability.Ability;
 import net.dnd5ecraft.rules.ability.AbilityCheckEngine;
 import net.dnd5ecraft.rules.ability.DiceRoller;
+import net.dnd5ecraft.rules.ability.TabletopRolls;
+import net.dnd5ecraft.rules.ability.TabletopRolls.Outcome;
 import net.dnd5ecraft.rules.ability.PassiveSenseTracker;
 import net.dnd5ecraft.rules.ability.Skill;
 import net.dnd5ecraft.rules.ability.AbilityCheckEngine.RollMode;
@@ -61,6 +63,8 @@ public final class CombatManager {
         default boolean canOccupy(CombatantEntry mover, Cell cell) { return canOccupy(cell); }
         default boolean blocksSight(Cell cell) { return blocksCover(cell); }
         default boolean blocksMagic(Cell cell) { return blocksCover(cell); }
+
+        default boolean manualDeathSaves(CombatantEntry target) { return false; }
 
         default boolean suppressesRegeneration(CombatantEntry target) { return false; }
         default boolean useLegendaryResistance(CombatantEntry target) { return true; }
@@ -113,6 +117,7 @@ public final class CombatManager {
     private final List<Event> events = new ArrayList<>();
     private Pending pending;
     private long turnSequence;
+    private UUID pendingDeathSave;
     private long effectSequence;
     private int lairActionRound;
 
@@ -179,6 +184,7 @@ public final class CombatManager {
     public void endTurn(UUID actor, long nowMillis) {
         requireIdle(nowMillis);
         CombatantEntry current = current(actor);
+        if (pendingDeathSave().filter(actor::equals).isPresent()) resolveDeathSave(actor, RollMode.NORMAL);
         spells.repeatSaves(current);
         spells.expireEffects(current, false);
         List<ConditionInstance> remaining = current.conditions.stream().flatMap(c -> c.advanceRound().stream()).toList();
@@ -242,16 +248,41 @@ public final class CombatManager {
         });
         spells.triggerZones(current, null);
         if (!current.canAct()) endConcentration(current.id());
+        pendingDeathSave = null;
         if (!current.dead() && current.death.state() == DeathSaveTracker.State.DYING) {
-            RollMode mode = current.conditionEffects().savingThrow(Ability.CONSTITUTION, false, false).mode();
-            int roll = d20(current, mode);
-            var result = current.death.roll(roll, luck(current) + auraOfProtection(current));
-            current.death = result.tracker();
-            if (current.dead()) current.diedAtRound = encounter.round();
-            if (result.hitPointsRestored() > 0) current.hp = current.hp.heal(result.hitPointsRestored());
-            event(EventType.DEATH_SAVE, current, current, current.death.state().name(), roll);
+            pendingDeathSave = current.id();
+            if (!world.manualDeathSaves(current)) resolveDeathSave(current.id(), RollMode.NORMAL);
         }
         event(EventType.TURN, current, current, "", encounter.round());
+    }
+
+    public Optional<UUID> pendingDeathSave() {
+        return encounter.currentEntry().filter(entry -> entry.id().equals(pendingDeathSave)
+                && !entry.dead() && entry.death.state() == DeathSaveTracker.State.DYING).map(CombatantEntry::id);
+    }
+
+    public Outcome resolveDeathSave(UUID actor, RollMode requested) {
+        if (pendingDeathSave().filter(actor::equals).isEmpty()) throw new IllegalStateException("No death save is due");
+        var current = encounter.require(actor);
+        RollMode mode = current.conditionEffects().savingThrow(Ability.CONSTITUTION,
+                requested == RollMode.ADVANTAGE, requested == RollMode.DISADVANTAGE).mode();
+        var roll = rolledD20(current, mode);
+        int natural = roll.kept();
+        int modifier = luck(current) + auraOfProtection(current);
+        var result = current.death.roll(natural, modifier);
+        current.death = result.tracker();
+        pendingDeathSave = null;
+        if (current.dead()) current.diedAtRound = encounter.round();
+        if (result.hitPointsRestored() > 0) current.hp = current.hp.heal(result.hitPointsRestored());
+        event(EventType.DEATH_SAVE, current, current, current.death.state().name(), natural);
+        return new Outcome(roll.dice(), natural, modifier,
+                natural + modifier, 20, roll.mode(), false);
+    }
+
+    public void spendTabletopInspiration(UUID actor) {
+        var entry = encounter.require(actor);
+        if (!entry.characterResources.inspiration()) throw new IllegalStateException("Inspiration is unavailable");
+        entry.characterResources = entry.characterResources.withInspiration(false);
     }
 
     public void dash(UUID actor, boolean bonusAction, long nowMillis) {
@@ -431,17 +462,20 @@ public final class CombatManager {
         maneuvers.maneuver(actor, action, targetId, option, point, nowMillis);
     }
 
-    int d20(CombatantEntry user, RollMode mode) {
+    int d20(CombatantEntry user, RollMode mode) { return rolledD20(user, mode).kept(); }
+
+    private Outcome rolledD20(CombatantEntry user, RollMode mode) {
         boolean halfling = user.race == RaceType.HALFLING;
-        boolean inspired = user.advantageOnNextRoll;
+        if (user.advantageOnNextRoll) mode = RollMode.from(true, mode == RollMode.DISADVANTAGE);
         user.advantageOnNextRoll = false;
-        var dice = new DiceRoller(roller);
-        int total = dice.d20(inspired ? RollMode.from(true, mode == RollMode.DISADVANTAGE) : mode, 0, halfling).total();
-        if (user.luckyRoll) {
-            user.luckyRoll = false;
-            return Math.max(total, DiceRoller.naturalD20(roller, halfling));
-        }
-        return total;
+        var result = TabletopRolls.d20(new DiceRoller(roller), mode, 0, halfling);
+        if (!user.luckyRoll) return result;
+        user.luckyRoll = false;
+        int reroll = DiceRoller.naturalD20(roller, halfling);
+        var dice = new ArrayList<>(result.dice());
+        dice.add(reroll);
+        int kept = Math.max(result.kept(), reroll);
+        return new Outcome(dice, kept, 0, kept, 20, mode, false);
     }
 
     public Optional<Window> attack(UUID actor, UUID target, int profile, long nowMillis) {

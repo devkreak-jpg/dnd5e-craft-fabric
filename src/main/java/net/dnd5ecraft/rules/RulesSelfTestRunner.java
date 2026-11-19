@@ -28,6 +28,7 @@ import net.dnd5ecraft.rules.ability.DiceRoller;
 import net.dnd5ecraft.rules.ability.PassiveSenseTracker;
 import net.dnd5ecraft.rules.ability.ProficiencyLevel;
 import net.dnd5ecraft.rules.ability.Skill;
+import net.dnd5ecraft.rules.ability.TabletopRolls;
 import net.dnd5ecraft.rules.character.ClassFeature;
 import net.dnd5ecraft.rules.character.ClassType;
 import net.dnd5ecraft.rules.character.MulticlassValidator;
@@ -66,6 +67,7 @@ public final class RulesSelfTestRunner {
         runner.geometry();
         runner.difficulty();
         runner.hardening();
+        runner.tabletop();
         System.out.printf("%d assertions passed%n", runner.checks);
     }
 
@@ -240,6 +242,21 @@ public final class RulesSelfTestRunner {
         var english = localizationKeys("en_us");
         check("observer badge translation", true, english.contains("dnd-5e-craft.ui.hud.dm_observing"));
         check("localization key parity", english, localizationKeys("ru_ru"));
+    }
+
+    private void tabletop() {
+        check("private roll reaches its player", true, TabletopRolls.visible(true, true, false));
+        check("private roll reaches an operator", true, TabletopRolls.visible(true, false, true));
+        check("private roll is hidden from another player", false, TabletopRolls.visible(true, false, false));
+        check("tray minimum", new TabletopRolls.DicePool(1, 4), TabletopRolls.tray("1d4"));
+        check("tray maximum pool", new TabletopRolls.DicePool(8, 20), TabletopRolls.tray("8d20"));
+        check("tray percentile", new TabletopRolls.DicePool(1, 100), TabletopRolls.tray("1d100"));
+        check("Shift forces advantage", RollMode.ADVANTAGE, TabletopRolls.clickMode(RollMode.NORMAL, true, false));
+        check("Alt forces disadvantage", RollMode.DISADVANTAGE, TabletopRolls.clickMode(RollMode.NORMAL, false, true));
+        var weapon = new DamagePipeline.DamageRoll(SLASHING, new DamagePipeline.Dice(1, 8), 3);
+        var crit = TabletopRolls.weaponDamage(new DiceRoller((IntUnaryOperator) sides -> 4), weapon, true, 0);
+        check("critical double dice", List.of(4, 4), crit.dice());
+        check("critical keeps the modifier once", 11, crit.total());
     }
 
     private Set<String> localizationKeys(String locale) {
