@@ -34,6 +34,7 @@ public final class TriggerZoneBlockEntity extends BlockEntity {
     private final Set<UUID> detected = new HashSet<>();
     private final Map<UUID, Long> checked = new HashMap<>();
     private TriggerZoneSpec spec;
+    private boolean poisonDice;
     private TriggerOccupancy occupancy = new TriggerOccupancy(false, 0);
 
     public TriggerZoneBlockEntity(BlockPos pos, BlockState state) {
@@ -44,10 +45,17 @@ public final class TriggerZoneBlockEntity extends BlockEntity {
         if (level != null && level.isClientSide) throw new IllegalStateException("Zones are server controlled");
         if (!spec.contains(cell(worldPosition))) throw new IllegalArgumentException("The trigger marker must be inside the zone");
         this.spec = spec;
+        poisonDice = false;
         detected.clear();
         checked.clear();
         occupancy = new TriggerOccupancy(true, 0);
         setChanged();
+    }
+
+    public void configurePoisonTrap(TriggerZoneSpec trap) {
+        if (trap.mode() != Mode.TRAP) throw new IllegalArgumentException("Poison damage requires a trap");
+        configure(trap);
+        poisonDice = true;
     }
 
     public boolean armed() { return occupancy.armed(); }
@@ -87,9 +95,10 @@ public final class TriggerZoneBlockEntity extends BlockEntity {
         if (spec.mode() == Mode.TRAP) {
             for (ServerPlayer entrant : entrants) {
                 var save = PlayerRules.save(entrant, Ability.DEXTERITY, spec.saveDc());
-                int damage = save.succeeds() ? spec.damage() / 2 : spec.damage();
+                int roll = poisonDice ? 2 + level.getRandom().nextInt(6) + level.getRandom().nextInt(6) : spec.damage();
+                int damage = save.succeeds() ? roll / 2 : roll;
                 if (damage > 0) {
-                    TacticalCombat.environmentDamage(entrant, DamageType5e.PIERCING, damage);
+                    TacticalCombat.environmentDamage(entrant, poisonDice ? DamageType5e.POISON : DamageType5e.PIERCING, damage);
                 }
             }
         } else if (!ambush(level, entrants)) {
@@ -183,6 +192,7 @@ public final class TriggerZoneBlockEntity extends BlockEntity {
         tag.putInt("Cooldown", spec.cooldownTicks());
         tag.putBoolean("OneShot", spec.oneShot());
         tag.putInt("Damage", spec.damage());
+        tag.putBoolean("PoisonDice", poisonDice);
         tag.putString("Ambusher", spec.ambusher().id());
         tag.putInt("Ambushers", spec.ambushers());
         tag.putInt("PerceptionDC", spec.perceptionDc());
@@ -198,6 +208,7 @@ public final class TriggerZoneBlockEntity extends BlockEntity {
     public void load(CompoundTag tag) {
         super.load(tag);
         spec = null;
+        poisonDice = false;
         occupancy = new TriggerOccupancy(false, 0);
         if (!tag.contains("Min", Tag.TAG_LONG) || !tag.contains("Max", Tag.TAG_LONG)) return;
         try {
@@ -209,6 +220,7 @@ public final class TriggerZoneBlockEntity extends BlockEntity {
             if (!loaded.contains(cell(worldPosition))) throw new IllegalArgumentException("Zone marker outside bounds");
             var savedOccupancy = new TriggerOccupancy(tag.getBoolean("Armed"), tag.getLong("Next"));
             spec = loaded;
+            poisonDice = loaded.mode() == Mode.TRAP && tag.getBoolean("PoisonDice");
             occupancy = savedOccupancy;
         } catch (IllegalArgumentException invalid) {
             org.slf4j.LoggerFactory.getLogger(TriggerZoneBlockEntity.class).warn("Ignored invalid trigger zone at {}", worldPosition, invalid);

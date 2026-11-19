@@ -405,7 +405,8 @@ public final class ModPackets {
                 boolean lair = buf.readBoolean();
                 String greeting = buf.readUtf(1024);
                 var opening = readList(buf, 12, PacketCodec::dialogueOption);
-                yield player -> saveNpc(player, new Npc(id, revision, name, preset, attitude, lair, greeting, opening));
+                String skin = buf.readUtf(180);
+                yield player -> saveNpc(player, new Npc(id, revision, name, preset, attitude, lair, greeting, opening, skin));
             }
             case NPC_SPAWN -> {
                 Cell cell = cell(buf);
@@ -616,9 +617,10 @@ public final class ModPackets {
         var node = tree.node(tree.start());
         var opening = node.choices().stream().map(choice -> option(choice, NpcAttitude.INDIFFERENT)).toList();
         String name = trim(npc.getDisplayName().getString(), 80);
-        long revision = java.util.Objects.hash(npc.getUUID(), name, npc.preset(), npc.attitude(),
+        String skin = npc.skin().map(Object::toString).orElse("");
+        long revision = java.util.Objects.hash(npc.getUUID(), name, npc.preset(), npc.attitude(), skin,
                 npc.bestiary().isInLair(), System.identityHashCode(tree));
-        return new Npc(npc.getUUID(), revision, name, npc.preset(), npc.attitude(), npc.bestiary().isInLair(), node.text(), opening);
+        return new Npc(npc.getUUID(), revision, name, npc.preset(), npc.attitude(), npc.bestiary().isInLair(), node.text(), opening, skin);
     }
 
     private static void saveNpc(ServerPlayer player, Npc edit) {
@@ -631,6 +633,7 @@ public final class ModPackets {
                 || (edit.lair() && !edit.preset().features().contains(BestiaryPreset.Feature.LAIR_ACTION))) {
             throw new IllegalArgumentException("Invalid NPC configuration");
         }
+        DndNpcEntity.validatedSkin(edit.skin());
         var tree = npc.dialogue();
         var original = tree.node(tree.start());
         var options = new ArrayList<DialogueChoice>();
@@ -654,6 +657,7 @@ public final class ModPackets {
         } else npc.setAttitude(edit.attitude());
         if (!edit.name().equals(view.name())) npc.setCustomName(Component.literal(edit.name().strip()));
         npc.setDialogue(BestiaryRegistry5e.dialogueAfterPresetChange(priorPreset, edit.preset(), changed));
+        if (!view.skin().equals(edit.skin())) npc.setAppearance(edit.skin(), npc.physicalScale());
         npc.bestiary().setLairEnabled(edit.lair());
         notice(player, Component.translatable("dnd-5e-craft.net.saved"));
         sendNpc(player, npc);
@@ -702,6 +706,7 @@ public final class ModPackets {
             out.writeBoolean(view.lair());
             out.writeUtf(view.greeting(), 1024);
             writeList(out, view.opening(), PacketCodec::dialogueOption);
+            out.writeUtf(view.skin(), 180);
         });
     }
 

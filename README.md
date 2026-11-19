@@ -4,7 +4,7 @@ DnD 5e Craft brings character sheets, turn-based encounters, spellcasting, NPC d
 
 ## Install
 
-Use Java 17, Fabric Loader 0.20.1, and Fabric API 0.92.12+1.20.1. Put the mod JAR and Fabric API in the `mods` folder on the client and server. Get the installable JAR from a successful [GitHub Actions build](https://github.com/devkreak-jpg/dnd5e-craft-fabric/actions/workflows/build.yml) or build it locally. The installable file is `build/libs/dnd-5e-craft-3.3.0.jar`.
+Use Java 17, Fabric Loader 0.20.1, and Fabric API 0.92.12+1.20.1. Put the mod JAR and Fabric API in the `mods` folder on the client and server. Get the installable JAR from a successful [GitHub Actions build](https://github.com/devkreak-jpg/dnd5e-craft-fabric/actions/workflows/build.yml) or build it locally. The installable file is `build/libs/dnd-5e-craft-3.4.0.jar`.
 
 Existing worlds using the older `dnd5ecraft` mod ID require a migration before upgrading.
 

@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Locale;
 import javax.imageio.ImageIO;
 import net.dnd5ecraft.entity.CrowdTheme;
+import net.dnd5ecraft.entity.DndNpcEntity;
+import net.dnd5ecraft.entity.NpcSkinCatalog;
 import net.dnd5ecraft.rules.equipment.WeaponStatsRegistry.Weapon;
 import org.junit.jupiter.api.Test;
 
@@ -66,6 +68,50 @@ final class CampaignAssetIntegrityTest {
             assertEquals(32, image.getWidth(), armor);
             assertEquals(32, image.getHeight(), armor);
         }
+    }
+
+    @Test
+    void masterworkSpritesAndWornArmorAreRgba() throws Exception {
+        var armor = List.of("studded_leather_armor", "scale_mail", "breastplate", "half_plate", "splint_armor", "plate_armor");
+        var items = new ArrayList<>(armor);
+        items.addAll(List.of("sentinel_shield", "repeating_light_crossbow", "worldbreaker_wraps", "harlequin_deck_wand",
+                "echo_sigil", "eldritch_cannon_controller", "crowd_spawner_staff", "dm_master_wand", "bag_of_holding"));
+        assertEquals(37, Weapon.values().length);
+        for (var weapon : Weapon.values()) items.add(weapon.name().toLowerCase(Locale.ROOT));
+        for (var item : items) dimensions("textures/item/" + item + ".png", 32, 32);
+        for (var type : armor) for (int layer = 1; layer <= 2; layer++)
+            dimensions("textures/models/armor/" + type + "_layer_" + layer + ".png", 64, 32);
+    }
+
+    @Test
+    void allNpcSkinsAreUniqueLayeredAndAcceptedByAppearanceValidation() throws Exception {
+        net.minecraft.SharedConstants.tryDetectVersion();
+        net.minecraft.server.Bootstrap.bootStrap();
+        assertEquals(34, NpcSkinCatalog.ALL.size());
+        var images = new java.util.HashSet<Integer>();
+        for (var skin : NpcSkinCatalog.ALL) {
+            var path = skin.texture().getPath();
+            var image = dimensions(path, 64, 64);
+            assertEquals(skin.texture(), DndNpcEntity.validatedSkin(skin.texture().toString()));
+            assertTrue(images.add(java.util.Arrays.hashCode(image.getRGB(0, 0, 64, 64, null, 0, 64))), path);
+            assertTrue(java.util.Arrays.stream(image.getRGB(16, 36, 24, 12, null, 0, 24)).anyMatch(pixel -> pixel >>> 24 != 0), path);
+            assertEquals(0, image.getRGB(63, 0) >>> 24, path);
+        }
+        assertNotNull(DndNpcEntity.validatedSkin("dnd-5e-craft:textures/entity/crowd/guards_0.png"));
+        assertThrows(IllegalArgumentException.class, () -> DndNpcEntity.validatedSkin("foreign:textures/entity/skins/a.png"));
+        assertThrows(IllegalArgumentException.class, () -> DndNpcEntity.validatedSkin("dnd-5e-craft:textures/entity/skins/../a.png"));
+    }
+
+    private static java.awt.image.BufferedImage dimensions(String path, int width, int height) throws Exception {
+        try (var input = asset(path)) {
+            var header = input.readNBytes(26);
+            assertEquals(26, header.length, path);
+            assertEquals(6, header[25], path);
+        }
+        var image = png(path);
+        assertEquals(width, image.getWidth(), path);
+        assertEquals(height, image.getHeight(), path);
+        return image;
     }
 
     private static com.google.gson.JsonObject model(String item) throws Exception {

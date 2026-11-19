@@ -169,7 +169,7 @@ final class MinecraftBattlefield implements CombatManager.Battlefield {
         BlockPos pos = position(cell);
         if (!loaded(pos)) return true;
         var state = level.getBlockState(pos);
-        return !state.getFluidState().isEmpty() || state.is(BlockTags.SNOW) || level.getBlockState(pos.below()).is(BlockTags.SAND);
+        return !state.getFluidState().isEmpty() || state.is(net.minecraft.world.level.block.Blocks.COBWEB) || state.is(BlockTags.SNOW) || level.getBlockState(pos.below()).is(BlockTags.SAND);
     }
 
     @Override

@@ -471,8 +471,8 @@ final class CombatManeuverResolver {
         resource(user, ClassFeature.DRACONIC_BREATH, 1, Resource.ACTION);
         int level = user.stats().level();
         int dice = level >= 16 ? 5 : level >= 11 ? 4 : level >= 6 ? 3 : 2;
-        manager.resolveBestiaryFire(user, shape, 8 + user.stats().abilityModifier(Ability.CONSTITUTION)
-                + user.stats().proficiencyBonus(), new Dice(dice, 6));
+        manager.resolveBestiaryArea(user, shape, 8 + user.stats().abilityModifier(Ability.CONSTITUTION)
+                + user.stats().proficiencyBonus(), new Dice(dice, 6), DamageType5e.FIRE);
     }
 
     private List<DamageRoll> withSneakAttack(CombatantEntry attacker, CombatantEntry defender, Attack attack, RollMode mode) {
@@ -588,6 +588,14 @@ final class CombatManeuverResolver {
         }, time -> {
             AttackOutcome finalOutcome = DamagePipeline.attackOutcome(hit.roll(), hit.modifier() - penalties[0],
                     hit.defender.armorClass() + hit.cover(), hit.criticalOnHit());
+            if (finalOutcome == AttackOutcome.HIT && !hit.missile && hit.defender.canReact()
+                    && hit.defender.bestiary().filter(state -> state.preset() == BestiaryPreset.CAPTAIN_MORGAN).isPresent()
+                    && DamagePipeline.attackOutcome(hit.roll(), hit.modifier() - penalties[0],
+                            hit.defender.armorClass() + hit.cover() + 3, hit.criticalOnHit()) == AttackOutcome.MISS) {
+                hit.defender.turn.spend(Resource.REACTION);
+                finalOutcome = AttackOutcome.MISS;
+                manager.event(EventType.BESTIARY, hit.defender, hit.attacker, "parry", 3);
+            }
             manager.event(finalOutcome == AttackOutcome.MISS ? EventType.MISS : EventType.HIT,
                     hit.attacker, hit.defender, finalOutcome.name(), hit.roll);
             effect.apply(finalOutcome, dodge[0], Math.max(0, penalties[1]));

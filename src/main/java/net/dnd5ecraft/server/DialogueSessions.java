@@ -75,7 +75,7 @@ public final class DialogueSessions {
             var definition = choice.check().orElseThrow();
             var check = new Check(Kind.SKILL, definition.skill().name());
             var mode = PlayerRules.tabletopMode(player, check, options);
-            int dc = npc.attitudeFor(player.getUUID()).adjustDifficulty(definition.difficulty());
+            int dc = dialogueAttitude(player, npc).adjustDifficulty(definition.difficulty());
             var roll = TabletopRolls.d20(new DiceRoller(PlayerRules.dice(player)), mode,
                     TabletopRolls.modifier(PlayerSheets.get(player).orElse(null), check), PlayerRules.lucky(player));
             TabletopPackets.dialogue(player, token, check, roll, dc, options.whisper());
@@ -83,7 +83,7 @@ public final class DialogueSessions {
         } else if (choice.check().isPresent()) {
             var character = PlayerSheets.get(player);
             RollMode mode = RollMode.from(false, character.map(sheet -> sheet.exhaustion().abilityCheckDisadvantage()).orElse(false));
-            var selection = session.tree.choose(session.node, id, npc.attitudeFor(player.getUUID()),
+            var selection = session.tree.choose(session.node, id, dialogueAttitude(player, npc),
                     skill -> character.map(sheet -> sheet.skillModifier(skill)).orElseGet(() -> Ability.modifier(10)),
                     mode, PlayerRules.dice(player));
             selection.check().ifPresent(check -> ModPackets.notice(player, Component.translatable("dnd-5e-craft.dialogue.check",
@@ -101,6 +101,11 @@ public final class DialogueSessions {
         var sessions = active(player);
         Session session = sessions.get(player.getUUID());
         if (session != null && session.token.equals(token)) sessions.remove(player.getUUID());
+    }
+
+    private static net.dnd5ecraft.dialogue.NpcAttitude dialogueAttitude(ServerPlayer player, DndNpcEntity npc) {
+        return npc.preset() == net.dnd5ecraft.entity.BestiaryPreset.CAPTAIN_MORGAN
+                ? net.dnd5ecraft.dialogue.NpcAttitude.INDIFFERENT : npc.attitudeFor(player.getUUID());
     }
 
     private static boolean available(ServerPlayer player, DndNpcEntity npc) {
@@ -122,7 +127,7 @@ public final class DialogueSessions {
         else sessions.put(player.getUUID(), new Session(token, npc.getUUID(), tree, nodeId,
                 player.serverLevel().getGameTime() + TIMEOUT_TICKS));
         if (ModPackets.supports(player)) {
-            var attitude = npc.attitudeFor(player.getUUID());
+            var attitude = dialogueAttitude(player, npc);
             ModPackets.sendDialogue(player, new Protocol.Dialogue(token, npc.getDisplayName().getString(), node.text(), attitude,
                     node.choices().stream().map(choice -> ModPackets.option(choice, attitude)).toList()), npc.getName());
             return;

@@ -4,6 +4,7 @@ import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.entity.CrowdTheme;
 import net.dnd5ecraft.entity.NpcBehaviorMode;
 import net.dnd5ecraft.entity.NpcSpawns;
+import net.dnd5ecraft.entity.NpcSkinCatalog;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
@@ -15,6 +16,8 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
+
+import static net.dnd5ecraft.entity.NpcSkinCatalog.*;
 
 public final class CrowdSpawnerStaffItem extends Item {
     public CrowdSpawnerStaffItem(Properties properties) { super(properties); }
@@ -56,9 +59,17 @@ public final class CrowdSpawnerStaffItem extends Item {
         var pos = context.getClickedPos().relative(context.getClickedFace());
         var crowd = theme(staff);
         var profile = crowd.random(new java.util.Random(operator.getRandom().nextLong()));
+        var skins = switch (crowd) {
+            case TAVERN -> java.util.List.of(BARD_MINSTREL, PEASANT_MALE, PEASANT_FEMALE, MYSTERIOUS_STRANGER);
+            case TOWNSFOLK -> java.util.List.of(BLACKSMITH_TORIN, MERCHANT_ELARA, NOBLE_LORD, NOBLE_LADY, WIZARD_SCHOLAR);
+            case GUARDS -> java.util.List.of(TOWN_GUARD_CAPTAIN, TOWN_GUARD_SPEARMAN);
+            case BANDITS -> java.util.List.of(BANDIT_THUG, BANDIT_CROSSBOWMAN, BANDIT_CUTTHROAT);
+            case CULTISTS -> java.util.List.of(CULTIST_ACOLYTE, CULTIST_NECROMANCER);
+        };
+        NpcSkinCatalog skin = skins.get(operator.getRandom().nextInt(skins.size()));
         var spawned = NpcSpawns.spawn(operator.serverLevel(), pos, crowd.preset(), NpcAttitude.INDIFFERENT, npc -> {
             npc.setCustomName(Component.literal(profile.name()));
-            npc.setAppearance(profile.texture(), profile.scale());
+            npc.setAppearance(skin.texture().toString(), profile.scale());
             npc.setBehavior(NpcBehaviorMode.WANDER, profile.radius());
             if (profile.weapon() != null) {
                 npc.setItemSlot(EquipmentSlot.MAINHAND, ModItems.weapon(profile.weapon()).getDefaultInstance());

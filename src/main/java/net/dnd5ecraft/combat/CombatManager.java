@@ -224,6 +224,8 @@ public final class CombatManager {
         legendaryAfterTurn(current, 0, nowMillis);
     }
 
+    private int legendaryRound;
+
     private void legendaryAfterTurn(CombatantEntry finished, int index, long nowMillis) {
         List<CombatantEntry> order = encounter.initiativeOrder();
         for (int i = index; i < order.size(); i++) {
@@ -232,9 +234,16 @@ public final class CombatManager {
                     || !attacker.canAct() || !canHarm(attacker, finished)) continue;
             var state = attacker.bestiary().orElse(null);
             if (state == null || state.legendaryActions() == 0) continue;
-            Attack attack = state.preset() == BestiaryPreset.ADULT_RED_DRAGON
-                    ? attacker.stats().attacks().get(2) : attacker.stats().attacks().get(0);
-            if (!attack.inRange(attacker.cell().distanceFeet(finished.cell()))
+            int distance = attacker.cell().distanceFeet(finished.cell());
+            Attack attack = switch (state.preset()) {
+                case ADULT_RED_DRAGON -> attacker.stats().attacks().get(2);
+                case CAPTAIN_MORGAN -> {
+                    if (finished.team() != 0) yield null;
+                    yield attacker.stats().attacks().stream().filter(weapon -> weapon.inRange(distance)).findFirst().orElse(null);
+                }
+                default -> attacker.stats().attacks().get(0);
+            };
+            if (attack == null || !attack.inRange(distance) || !canSee(attacker, finished)
                     || cover(attacker, finished).blocksTargeting()) continue;
             state.spendLegendaryAction();
             event(EventType.BESTIARY, attacker, finished, "legendary_attack", state.legendaryActions());
@@ -246,6 +255,12 @@ public final class CombatManager {
     }
 
     private void beginTurn(CombatantEntry current) {
+        if (legendaryRound != encounter.round()) {
+            legendaryRound = encounter.round();
+            encounter.initiativeOrder().forEach(entry -> entry.bestiary()
+                    .filter(state -> state.preset() == BestiaryPreset.CAPTAIN_MORGAN)
+                    .ifPresent(BestiaryTurnState::renewLegendaryActions));
+        }
         if (current.initiative() < 20 && lairActionRound != encounter.round()) {
             lairActionRound = encounter.round();
             resolveLairActions();
@@ -693,6 +708,13 @@ public final class CombatManager {
         return CoverRaycaster.cover(eye(from), target.bounds(), world::blocksCover);
     }
 
+    Cover coverAt(Cell from, CombatantEntry target, Cell destination) {
+        Vec3 delta = destination.center().minus(target.cell().center());
+        var bounds = target.bounds();
+        return CoverRaycaster.cover(eye(from), new net.dnd5ecraft.rules.spells.AoEGeometry.Box(
+                bounds.min().plus(delta), bounds.max().plus(delta)), world::blocksCover);
+    }
+
     public boolean canSee(CombatantEntry observer, CombatantEntry target) {
         return canSeeFrom(observer, observer.cell(), target);
     }
@@ -825,25 +847,25 @@ public final class CombatManager {
 
     boolean save(CombatantEntry target, Ability ability, int dc, int bonus, boolean disadvantage, boolean magic) {
         var flags = saveFlags(target, ability, disadvantage, magic, false);
-        return finishSave(target, ability, dc, bonus, flags.automaticFailure(), flags.automaticFailure() ? 0 : d20(target, flags.mode()));
+        return finishSave(target, ability, dc, bonus, flags.automaticFailure(), flags.automaticFailure() ? 0 : d20(target, flags.mode()), false);
     }
 
     boolean saveAgainstFear(CombatantEntry target, int dc) {
         var flags = saveFlags(target, Ability.WISDOM, false, true, true);
-        return finishSave(target, Ability.WISDOM, dc, 0, flags.automaticFailure(), flags.automaticFailure() ? 0 : d20(target, flags.mode()));
+        return finishSave(target, Ability.WISDOM, dc, 0, flags.automaticFailure(), flags.automaticFailure() ? 0 : d20(target, flags.mode()), true);
     }
 
-    void campaignSpellSave(CombatantEntry target, Ability ability, int dc, int bonus, boolean disadvantage, boolean serenity,
+    void campaignSpellSave(CombatantEntry target, Ability ability, int dc, int bonus, boolean disadvantage, boolean serenity, boolean serious,
             long time, java.util.function.BiConsumer<Boolean, Long> after) {
         var flags = saveFlags(target, ability, disadvantage, true, serenity);
         if (!encounter.active() || flags.automaticFailure()) {
             after.accept(finishSave(target, ability, dc, bonus, flags.automaticFailure(),
-                    flags.automaticFailure() ? 0 : d20(target, flags.mode())), time);
+                    flags.automaticFailure() ? 0 : d20(target, flags.mode()), serious), time);
             return;
         }
         var roll = rolledD20(target, flags.mode());
         campaign.editRoll(target, roll.kept(), roll.dice().get(0), roll.mode(), time, (edited, moment) ->
-                after.accept(finishSave(target, ability, dc, bonus, false, edited.natural() + edited.adjustment()), moment));
+                after.accept(finishSave(target, ability, dc, bonus, false, edited.natural() + edited.adjustment(), serious), moment));
     }
 
     private net.dnd5ecraft.rules.conditions.ConditionEffectApplier.RollEffect saveFlags(CombatantEntry target, Ability ability,
@@ -857,11 +879,12 @@ public final class CombatManager {
         return target.conditionEffects().savingThrow(ability, advantages, disadvantage);
     }
 
-    private boolean finishSave(CombatantEntry target, Ability ability, int dc, int bonus, boolean automaticFailure, int roll) {
+    private boolean finishSave(CombatantEntry target, Ability ability, int dc, int bonus, boolean automaticFailure, int roll, boolean serious) {
         var state = target.bestiary().orElse(null);
         boolean succeeds = !automaticFailure
                 && abilityOutcome(target, roll + target.stats().saveModifier(ability) + bonus + luck(target) + auraOfProtection(target), dc);
-        if (!succeeds && state != null && world.useLegendaryResistance(target) && state.useLegendaryResistance()) {
+        if (!succeeds && state != null && (state.preset() != BestiaryPreset.CAPTAIN_MORGAN || serious)
+                && world.useLegendaryResistance(target) && state.useLegendaryResistance()) {
             event(EventType.BESTIARY, target, target, "legendary_resistance", state.snapshot().legendaryResistances());
             succeeds = true;
         }
@@ -948,6 +971,13 @@ public final class CombatManager {
             spells.checkConcentration(target, result.damageTaken(),
                     target.stats().saveModifier(Ability.CONSTITUTION) + luck(target) + auraOfProtection(target), save.mode());
         }
+        if (before.current() > target.hp.current() && target.bestiary()
+                .filter(state -> state.enterBloodied(target.hp.current())).isPresent()) {
+            var health = target.hp;
+            target.hp = new HitPoints(health.current(), health.maximum(), Math.max(health.temporary(), 10),
+                    health.arcaneWard(), health.beast());
+            event(EventType.BESTIARY, target, target, "bloodied", 10);
+        }
         var type = result.adjustedDamage().entrySet().stream().max(Map.Entry.<DamageType5e, Integer>comparingByValue()
                 .thenComparing(Map.Entry::getKey)).map(Map.Entry::getKey).orElse(DamageType5e.BLUDGEONING);
         events.add(new Event(EventType.DAMAGE, source.id(), target.id(), "", result.damageTaken(), type, critical));
@@ -988,8 +1018,10 @@ public final class CombatManager {
                 .place(from, destination.minus(from), attacker.bounds(), false);
         attacker.turn.spend(Resource.ACTION);
         state.spendBreath();
-        event(EventType.BESTIARY, attacker, attacker, "fire_breath", breath.saveDc());
-        resolveBestiaryFire(attacker, area, breath.saveDc(), breath.dice());
+        boolean barrage = state.preset() == BestiaryPreset.CAPTAIN_MORGAN;
+        event(EventType.BESTIARY, attacker, attacker, barrage ? "smoke_barrage" : "fire_breath", breath.saveDc());
+        resolveBestiaryArea(attacker, area, breath.saveDc(), breath.dice(),
+                barrage ? DamageType5e.PIERCING : DamageType5e.FIRE);
     }
 
     private void resolveLairActions() {
@@ -1003,20 +1035,22 @@ public final class CombatManager {
                 Vec3 origin = foe.cell().center();
                 Area magma = new Template(AoEGeometry.CYLINDER, 5, 20).place(origin, null, owner.bounds(), true);
                 event(EventType.BESTIARY, owner, foe, "lair_magma", 20);
-                resolveBestiaryFire(owner, magma, 15, new Dice(6, 6));
+                resolveBestiaryArea(owner, magma, 15, new Dice(6, 6), DamageType5e.FIRE);
             });
         }
     }
 
-    void resolveBestiaryFire(CombatantEntry attacker, Area area, int dc, Dice dice) {
+    void resolveBestiaryArea(CombatantEntry attacker, Area area, int dc, Dice dice, DamageType5e type) {
         var targets = AoETargetResolver.resolve(area, encounter.initiativeOrder(), target -> target.cell().center(),
                 (from, to) -> CoverRaycaster.clearRay(from, to, world::blocksCover));
         int rolled = dice.roll(false, roller);
         for (CombatantEntry target : targets) {
             if (target == attacker || target.dead()) continue;
             int coverBonus = CoverRaycaster.cover(area.origin(), target.bounds(), world::blocksCover).bonus();
-            int amount = save(target, Ability.DEXTERITY, dc, coverBonus, false, false) ? rolled / 2 : rolled;
-            dealDamage(attacker, target, Map.of(DamageType5e.FIRE, amount), false, false);
+            var flags = saveFlags(target, Ability.DEXTERITY, false, false, false);
+            boolean saved = finishSave(target, Ability.DEXTERITY, dc, coverBonus, flags.automaticFailure(),
+                    flags.automaticFailure() ? 0 : d20(target, flags.mode()), rolled >= 15);
+            dealDamage(attacker, target, Map.of(type, saved ? rolled / 2 : rolled), false, false);
         }
     }
 

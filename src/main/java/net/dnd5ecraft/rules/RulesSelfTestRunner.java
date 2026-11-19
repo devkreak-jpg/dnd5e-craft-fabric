@@ -76,6 +76,7 @@ public final class RulesSelfTestRunner {
         runner.tabletop();
         runner.campaign();
         runner.studio();
+        runner.masterwork();
         System.out.printf("%d assertions passed%n", runner.checks);
     }
 
@@ -100,6 +101,46 @@ public final class RulesSelfTestRunner {
                 check("shader-safe " + renderer, false, Files.readString(file).contains("RenderType.debugQuads()"));
             }
         } catch (java.io.IOException invalid) { throw new AssertionError(invalid); }
+    }
+
+    private void masterwork() {
+        var state = new net.dnd5ecraft.entity.BestiaryTurnState(net.dnd5ecraft.entity.BestiaryPreset.CAPTAIN_MORGAN);
+        check("Morgan has two legendary actions", 2, state.legendaryActions());
+        check("Morgan above half health", false, state.enterBloodied(43));
+        check("Morgan enters phase two", true, state.enterBloodied(42));
+        check("Morgan only changes phase once", false, state.enterBloodied(30));
+        var half = net.dnd5ecraft.combat.CoverRaycaster.Cover.HALF;
+        var open = net.dnd5ecraft.combat.CoverRaycaster.Cover.NONE;
+        check("skirmisher prefers partial cover", 35,
+                net.dnd5ecraft.combat.MonsterAiDirector.rangedTileScore(half, false, true, 30)
+                - net.dnd5ecraft.combat.MonsterAiDirector.rangedTileScore(open, false, true, 30));
+
+        Path textures = Path.of("src/main/resources/assets/dnd-5e-craft/textures");
+        for (var weapon : net.dnd5ecraft.rules.equipment.WeaponStatsRegistry.Weapon.values())
+            verifyPng(textures.resolve("item/" + weapon.name().toLowerCase(java.util.Locale.ROOT) + ".png"), 32, 32);
+        var armor = java.util.List.of("studded_leather_armor", "scale_mail", "breastplate", "half_plate", "splint_armor", "plate_armor");
+        for (String item : armor) {
+            verifyPng(textures.resolve("item/" + item + ".png"), 32, 32);
+            for (int layer = 1; layer <= 2; layer++)
+                verifyPng(textures.resolve("models/armor/" + item + "_layer_" + layer + ".png"), 64, 32);
+        }
+        for (String item : java.util.List.of("sentinel_shield", "repeating_light_crossbow", "worldbreaker_wraps", "harlequin_deck_wand",
+                "echo_sigil", "eldritch_cannon_controller", "crowd_spawner_staff", "dm_master_wand", "bag_of_holding"))
+            verifyPng(textures.resolve("item/" + item + ".png"), 32, 32);
+        var skins = net.dnd5ecraft.entity.NpcSkinCatalog.ALL;
+        check("masterwork skin count", 34, skins.size());
+        for (var skin : skins) verifyPng(textures.resolve("entity/skins/" + skin.id() + ".png"), 64, 64);
+    }
+
+    private void verifyPng(Path path, int width, int height) {
+        try {
+            var png = Files.readAllBytes(path);
+            var image = javax.imageio.ImageIO.read(path.toFile());
+            check(path.getFileName() + " RGBA dimensions", true, png[25] == 6 && image != null
+                    && image.getWidth() == width && image.getHeight() == height && image.getColorModel().hasAlpha());
+        } catch (java.io.IOException failure) {
+            throw new AssertionError("Cannot read " + path, failure);
+        }
     }
 
     private void campaign() {

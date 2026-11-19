@@ -516,7 +516,10 @@ final class CombatSpellZoneResolver {
             else {
                 boolean serenity = Set.of("charm_person", "charm_monster", "fear", "cause_fear").contains(cast.spell.id());
                 manager.campaignSpellSave(target, ability, saveDc(cast), spellSaveBonus(cast, target, ability),
-                        cast.spell.id().equals("shatter") && target.stats().traits().contains(Trait.INORGANIC), serenity, time, finish);
+                        cast.spell.id().equals("shatter") && target.stats().traits().contains(Trait.INORGANIC), serenity,
+                        Set.of("hold_person", "hold_monster", "hypnotic_pattern", "banishment", "polymorph", "fear",
+                                "cause_fear", "blindness_deafness", "charm_person", "charm_monster", "web").contains(cast.spell.id())
+                                || cast.spell.targeting() == Targeting.AREA && element != null && amount >= 15, time, finish);
             }
             return;
         }

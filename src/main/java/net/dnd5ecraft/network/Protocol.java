@@ -19,7 +19,7 @@ import net.dnd5ecraft.rules.spells.AoEGeometry.Vec3;
 
 public final class Protocol {
     static final UUID NO_ACTOR = new UUID(0, 0);
-    public static final int VERSION = 3;
+    public static final int VERSION = 4;
     public static final int MAX_REQUEST = 16_000;
     public static final int MAX_COMBATANTS = 64;
     public static final int MAX_CELLS = 4096;
@@ -86,7 +86,7 @@ public final class Protocol {
         public Dialogue { options = List.copyOf(options); }
     }
     public record Npc(UUID id, long revision, String name, BestiaryPreset preset, NpcAttitude attitude, boolean lair,
-                      String greeting, List<DialogueOption> opening) {
+                      String greeting, List<DialogueOption> opening, String skin) {
         public Npc { opening = List.copyOf(opening); }
     }
     public record Zone(Cell marker, long revision, TriggerZoneSpec spec, boolean armed) {}

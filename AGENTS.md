@@ -13,7 +13,7 @@ java -cp build/classes/java/main net.dnd5ecraft.rules.RulesSelfTestRunner
 ./gradlew --offline --no-daemon build --console=plain -q | tail -n 60
 ```
 
-The installable remapped artifact is `build/libs/dnd-5e-craft-3.3.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 3 includes campaign actions, director selection, expanded reaction offers, and tactical turn tokens. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
+The installable remapped artifact is `build/libs/dnd-5e-craft-3.4.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 4 adds the NPC Studio skin field. Install v3.4 on both sides of a multiplayer session. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
 
 ## Phase checklist
 
@@ -29,6 +29,7 @@ The phase checks cover the offline build, the dedicated-server GameTests, and th
 - [x] Phase 6. Tactical world rendering, spinning die, AoE previews, floating combat bars, camera, darkvision, and NPC rendering.
 - [x] Phase 7. English and Russian localizations, Mixin side audit, and remapped release verification.
 - [x] **v3.3 Studio Masterpiece Edition**. Racial cosmetics and scaling, radial actions, shader-safe world rendering, and server-authoritative combat feedback.
+- [x] **v3.4 Masterwork Edition**. Tactical NPC roles, Captain Morgan, the demo map, 34 layered skins, and masterwork equipment textures.
 
 ## v1.1 hardening
 
@@ -61,6 +62,13 @@ The phase checks cover the offline build, the dedicated-server GameTests, and th
 - The optional Studio packet channel carries resolved damage, healing, saves, critical rolls and rest effects. Only the roller receives the critical or fumble screen effect. A short rest shows the hit points actually restored and a 3.5-second campfire around the resting character.
 - The player and NPC dimension hooks cover direct pose queries as well as cached hitboxes. The client scales each shadow when the dispatcher draws it. Racial features use the eight-tile atlas and honor helmets, disguises, invisibility and the local first-person camera.
 - Client rendering uses textured entity geometry for die faces and overhead bars. Run the standalone rules and resource checks from the repository root. Exercise the radial wheel, combat inspector, die, ping and combat feedback in a shader-enabled client when changing their rendering.
+
+## v3.4 Masterwork Edition
+
+- NPC Studio cycles through 34 layered skins. The bestiary selects default appearances by preset, and the Crowd Spawner uses a themed subset. Saved NPCs can still use older custom crowd textures.
+- The 37 standard weapons, six armor items, shield, and campaign gear use 32×32 inventory sprites. The six armor items each have dedicated worn layers. The weapon item models retain their existing grip transforms.
+- Brutes score flanks and pressure casters. Skirmishers seek cover and disengage from melee. Support casters heal endangered allies and target concentrating enemies. Captain Morgan Blackfang parries with his reaction, has two Legendary Resistances per day and two Legendary Actions per round, and calls in two bandits when he first reaches half health.
+- Operators can build the demo with `/dnd dm build_demo_map` or **Build Demo Map** in the Director Palette (**Shift+N**). The first build clears a 38×38 area beginning five blocks south of the operator, centered on their X coordinate. Run it on an open site. Subsequent builds reuse the saved site in that dimension and rebuild the tavern, square, and crypt, replacing the demo NPCs and restocking the chest. Enter the crypt, speak to Morgan, then use `/dnd dm start` to run the encounter.
 
 ## Phase 0 files
 

@@ -8,6 +8,7 @@ import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.dialogue.DialogueText;
 import net.dnd5ecraft.entity.BestiaryPreset;
 import net.dnd5ecraft.entity.BestiaryRegistry5e;
+import net.dnd5ecraft.entity.NpcSkinCatalog;
 import net.dnd5ecraft.network.PacketCodec;
 import net.dnd5ecraft.network.PacketPolicy.Action;
 import net.dnd5ecraft.network.Protocol.DialogueOption;
@@ -23,6 +24,7 @@ public final class NpcStudioScreen extends DndScreen {
     private final List<DialogueOption> options;
     private String displayName;
     private String greeting;
+    private String skin;
     private BestiaryPreset preset;
     private NpcAttitude attitude;
     private boolean lair;
@@ -33,6 +35,7 @@ public final class NpcStudioScreen extends DndScreen {
         original = npc;
         displayName = npc.name();
         greeting = npc.greeting();
+        skin = npc.skin();
         preset = npc.preset();
         attitude = npc.attitude();
         lair = npc.lair();
@@ -82,7 +85,27 @@ public final class NpcStudioScreen extends DndScreen {
             button(text("next"), x + half + 8, top + 97, half, () -> { option = (option + 1) % options.size(); rebuild(); }).active = options.size() > 1;
         }
         button(text("close"), x, bottom() - 25, 70, this::onClose);
+        button(skinLabel(), x + 76, bottom() - 25, w - 166, this::cycleSkin).active = option < 0;
         button(text("save"), x + w - 84, bottom() - 25, 84, this::save).active = ClientDndState.state().operator();
+    }
+
+    private int skinIndex() {
+        for (var skinOption : NpcSkinCatalog.ALL) {
+            if (skinOption.texture().toString().equals(skin)) return skinOption.ordinal();
+        }
+        return -1;
+    }
+
+    private Component skinLabel() {
+        int index = skinIndex();
+        if (index >= 0) return text("npc.skin", name("npc.skin", NpcSkinCatalog.ALL.get(index)));
+        return text(skin.isEmpty() ? "npc.skin_default" : "npc.skin_custom");
+    }
+
+    private void cycleSkin() {
+        int next = skinIndex() + 1;
+        skin = next == NpcSkinCatalog.ALL.size() ? "" : NpcSkinCatalog.ALL.get(next).texture().toString();
+        rebuild();
     }
 
     private void save() {
@@ -99,6 +122,7 @@ public final class NpcStudioScreen extends DndScreen {
             out.writeBoolean(lair);
             out.writeUtf(greeting, 1024);
             PacketCodec.writeList(out, options, PacketCodec::dialogueOption);
+            out.writeUtf(skin, 180);
         });
     }
 

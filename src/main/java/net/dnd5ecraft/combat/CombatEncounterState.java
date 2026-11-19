@@ -71,6 +71,15 @@ public final class CombatEncounterState {
         return order.get(index);
     }
 
+    public boolean addReinforcement(CombatantEntry recruit) {
+        if (!active() || entries.containsKey(recruit.id()) ||
+                order.stream().anyMatch(entry -> entry.cell().equals(recruit.cell()))) return false;
+        // Put the recruit at the end of the current round without moving the initiative cursor.
+        order.add(recruit);
+        entries.put(recruit.id(), recruit);
+        return true;
+    }
+
     void remove(UUID id) {
         CombatantEntry entry = entries.remove(id);
         if (entry == null) return;

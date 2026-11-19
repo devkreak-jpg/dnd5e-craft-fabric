@@ -198,6 +198,7 @@ public final class DndCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> dmCommands() {
         return literal("dm").requires(source -> source.hasPermission(2))
+                .then(literal("build_demo_map").executes(context -> run(context, DemoMapBuilder::build)))
                 .then(literal("give_gear").then(argument("hero", StringArgumentType.word())
                         .suggests((context, builder) -> net.minecraft.commands.SharedSuggestionProvider.suggest(
                                 java.util.Arrays.stream(net.dnd5ecraft.rules.campaign.CampaignHero.values())

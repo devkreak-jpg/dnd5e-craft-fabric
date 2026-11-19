@@ -19,6 +19,7 @@ import net.dnd5ecraft.combat.PlayerWeaponProfiles;
 import net.dnd5ecraft.combat.ReactionWindowManager.Kind;
 import net.dnd5ecraft.combat.TurnEconomy.Resource;
 import net.dnd5ecraft.entity.DndNpcEntity;
+import net.dnd5ecraft.entity.BestiaryPreset;
 import net.dnd5ecraft.entity.EchoAvatarEntity;
 import net.dnd5ecraft.entity.CampaignCompanion;
 import net.dnd5ecraft.item.ModItems;
@@ -309,6 +310,8 @@ public final class TacticalCombat {
             throw failure;
         }
     }
+
+    static boolean hasEncounter(ServerLevel level) { return ACTIVE.containsKey(level); }
 
     public static boolean stop(ServerLevel level) {
         Session session = ACTIVE.remove(level);
@@ -648,7 +651,9 @@ public final class TacticalCombat {
             Cell cell = cell(entity.blockPosition());
             if (entity instanceof DndNpcEntity npc) {
                 var stats = npc.preset().combatStats();
-                if (!npc.preset().civilian() && PlayerWeaponProfiles.stats(npc.getMainHandItem()).isPresent()) {
+                if (!npc.preset().civilian() && npc.preset() != BestiaryPreset.CAPTAIN_MORGAN
+                        && npc.preset() != BestiaryPreset.GOBLIN_ARCHER
+                        && PlayerWeaponProfiles.stats(npc.getMainHandItem()).isPresent()) {
                     var profile = PlayerWeaponProfiles.npc(npc.getMainHandItem(), stats);
                     stats = new CombatantEntry.Stats(stats.speedFeet(), stats.armorClass(), stats.armored(), stats.darkvisionFeet(),
                             stats.level(), stats.abilityScores(), stats.savingThrows(), stats.classes(), stats.spells(),
@@ -874,7 +879,9 @@ public final class TacticalCombat {
             if (npc.bestiary().canUseBreath() && actor.view().resources().available().contains(Resource.ACTION)) {
                 var target = state.initiativeOrder().stream().filter(entry -> !entry.dead() && entry.team() != actor.team()
                         && actor.cell().distanceFeet(entry.cell()) <= npc.preset().breath().lengthFeet()
-                        && manager.canSee(actor, entry)).findFirst();
+                        && manager.canSee(actor, entry) && !manager.cover(actor, entry).blocksTargeting())
+                        .min(java.util.Comparator.<CombatantEntry, Boolean>comparing(entry -> manager.concentration(entry.id()).isEmpty())
+                                .thenComparingInt(entry -> entry.hitPoints().current()));
                 if (target.isPresent()) {
                     manager.useBreath(actor.id(), target.get().cell().center(), time);
                     return;
@@ -934,6 +941,24 @@ public final class TacticalCombat {
                         default -> { }
                     }
                 }
+                if (entities.get(event.actor()) instanceof DndNpcEntity npc) {
+                    if (event.type() == CombatManager.EventType.TURN && npc.isAlive() && npc.getRandom().nextFloat() < .30f)
+                        DmDirector.battleBark(level, npc, npc.preset() == BestiaryPreset.CAPTAIN_MORGAN ? "morgan_turn" : "turn");
+                    if (event.type() == CombatManager.EventType.HIT && event.detail().equals("CRITICAL"))
+                        DmDirector.battleBark(level, npc, "critical");
+                    if (event.type() == CombatManager.EventType.BESTIARY) {
+                        switch (event.detail()) {
+                            case "legendary_attack" -> DmDirector.battleBark(level, npc, "legendary");
+                            case "smoke_barrage" -> {
+                                DmDirector.battleBark(level, npc, "barrage");
+                                level.sendParticles(net.minecraft.core.particles.ParticleTypes.LARGE_SMOKE, npc.getX(), npc.getY() + 1,
+                                        npc.getZ(), 30, .85, .55, .85, .045);
+                            }
+                            case "bloodied" -> bloodied(npc);
+                            default -> { }
+                        }
+                    }
+                }
                 if (event.type() == CombatManager.EventType.DEFEATED
                         || event.type() == CombatManager.EventType.HIT && event.detail().equals("CRITICAL")) {
                     var actor = entities.get(event.actor());
@@ -981,6 +1006,37 @@ public final class TacticalCombat {
                             style.withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/dnd react " + window.id() + " " + kind + " " + slot))));
                 }
             });
+        }
+
+        private void bloodied(DndNpcEntity boss) {
+            DmDirector.battleBark(level, boss, "bloodied");
+            var smoke = new net.minecraft.core.particles.DustParticleOptions(new org.joml.Vector3f(.36f, .045f, .10f), 1.45f);
+            level.sendParticles(smoke, boss.getX(), boss.getY() + 1.1, boss.getZ(), 70, .95, .65, .95, .05);
+            level.playSound(null, boss.blockPosition(), net.minecraft.sounds.SoundEvents.RAID_HORN.value(),
+                    net.minecraft.sounds.SoundSource.HOSTILE, 1f, .8f);
+            if (ACTIVE.get(level) != this) return;
+            int summoned = 0;
+            for (BlockPos point : BlockPos.spiralAround(boss.blockPosition(), 5,
+                    net.minecraft.core.Direction.EAST, net.minecraft.core.Direction.SOUTH)) {
+                if (summoned == 2 || state.initiativeOrder().size() >= Protocol.MAX_COMBATANTS) break;
+                if (point.distManhattan(boss.blockPosition()) < 2 || !level.isLoaded(point)
+                        || !level.getBlockState(point.below()).isFaceSturdy(level, point.below(), net.minecraft.core.Direction.UP)
+                        || !level.getFluidState(point).isEmpty()
+                        || state.initiativeOrder().stream().anyMatch(entry -> entry.cell().equals(cell(point)))) continue;
+                var spawn = net.dnd5ecraft.entity.NpcSpawns.spawn(level, point, BestiaryPreset.BANDIT_THUG,
+                        NpcAttitude.HOSTILE, npc -> npc.setItemSlot(net.minecraft.world.entity.EquipmentSlot.MAINHAND,
+                                ModItems.weapon(net.dnd5ecraft.rules.equipment.WeaponStatsRegistry.Weapon.MACE).getDefaultInstance()));
+                if (spawn.isEmpty()) continue;
+                var recruit = spawn.orElseThrow();
+                if (!state.addReinforcement(entry(recruit))) {
+                    recruit.discard();
+                    continue;
+                }
+                if (boss.getTags().contains(DemoMapBuilder.DEMO_NPC)) recruit.addTag(DemoMapBuilder.DEMO_NPC);
+                recruit.suspendAiForCombat();
+                entities.put(recruit.getUUID(), recruit);
+                summoned++;
+            }
         }
 
         private void restore() {

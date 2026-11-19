@@ -14,6 +14,7 @@ public final class Dnd5eCraftClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         net.dnd5ecraft.client.render.SentinelShieldModel.register();
+        net.dnd5ecraft.client.render.MasterworkArmorRenderer.register();
         net.minecraft.client.renderer.item.ItemProperties.register(net.dnd5ecraft.item.ModItems.SENTINEL_SHIELD,
                 new net.minecraft.resources.ResourceLocation("blocking"),
                 (stack, level, wearer, seed) -> wearer != null && wearer.isUsingItem() && wearer.getUseItem() == stack ? 1 : 0);

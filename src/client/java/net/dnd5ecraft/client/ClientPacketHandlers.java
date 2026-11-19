@@ -236,7 +236,7 @@ public final class ClientPacketHandlers {
             case NPC -> {
                 var npc = new Protocol.Npc(buf.readUUID(), buf.readLong(), buf.readUtf(80), readEnum(buf, BestiaryPreset.class),
                         readEnum(buf, NpcAttitude.class), buf.readBoolean(), buf.readUtf(1024),
-                        readList(buf, 12, PacketCodec::dialogueOption));
+                        readList(buf, 12, PacketCodec::dialogueOption), buf.readUtf(180));
                 yield client -> client.setScreen(new NpcStudioScreen(npc));
             }
             case ZONE -> {

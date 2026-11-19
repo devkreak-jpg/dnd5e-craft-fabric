@@ -24,6 +24,95 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BestiaryCombatTest {
     @Test
+    void skirmisherValuesPartialCoverAndAvoidsMeleeReach() {
+        var none = net.dnd5ecraft.combat.CoverRaycaster.Cover.NONE;
+        var half = net.dnd5ecraft.combat.CoverRaycaster.Cover.HALF;
+        var mostly = net.dnd5ecraft.combat.CoverRaycaster.Cover.THREE_QUARTERS;
+        int open = net.dnd5ecraft.combat.MonsterAiDirector.rangedTileScore(none, false, true, 30);
+        assertEquals(open + 35, net.dnd5ecraft.combat.MonsterAiDirector.rangedTileScore(half, false, true, 30));
+        assertEquals(open + 35, net.dnd5ecraft.combat.MonsterAiDirector.rangedTileScore(mostly, false, true, 30));
+        assertEquals(open - 10, net.dnd5ecraft.combat.MonsterAiDirector.rangedTileScore(half, true, true, 30));
+    }
+
+    @Test
+    void captainEntersPhaseTwoOnceWithTemporaryHealthAndRecharge() {
+        var enemy = hero(1, 10, 0, 0, false);
+        var captain = monster(2, 20, 4, 0, BestiaryPreset.CAPTAIN_MORGAN);
+        var combat = combat(sides -> 1, enemy, captain);
+        var state = captain.bestiary().orElseThrow();
+        combat.start();
+        assertEquals(2, state.legendaryActions());
+        assertEquals(2, state.snapshot().legendaryResistances());
+        assertTrue(state.spendBreath());
+
+        combat.damage(enemy.id(), captain.id(), Map.of(DamageType5e.SLASHING, 42), false);
+        assertEquals(43, captain.hitPoints().current());
+        assertFalse(state.snapshot().bloodied());
+        combat.damage(enemy.id(), captain.id(), Map.of(DamageType5e.SLASHING, 1), false);
+        assertEquals(42, captain.hitPoints().current());
+        assertEquals(10, captain.hitPoints().temporary());
+        assertTrue(state.canUseBreath());
+        assertTrue(state.spendBreath());
+
+        combat.damage(enemy.id(), captain.id(), Map.of(DamageType5e.SLASHING, 11), false);
+        assertEquals(41, captain.hitPoints().current());
+        assertEquals(0, captain.hitPoints().temporary());
+        assertFalse(state.canUseBreath());
+        assertEquals(1, combat.drainEvents().stream().filter(event -> event.detail().equals("bloodied")).count());
+        assertFalse(new BestiaryTurnState(BestiaryPreset.CAPTAIN_MORGAN, state.snapshot()).enterBloodied(30));
+    }
+
+    @Test
+    void captainSavesLegendaryResistanceForDangerousAreaDamage() {
+        var cleric = hero(1, 25, 0, 0, true);
+        var captain = monster(2, 10, 2, 0, BestiaryPreset.CAPTAIN_MORGAN);
+        var battle = combat(sides -> sides == 20 ? 1 : 2, cleric, captain);
+        battle.start();
+        battle.cast(cleric.id(), new CombatManager.CastRequest("sacred_flame", 0, List.of(captain.id())), 0);
+        assertEquals(2, captain.bestiary().orElseThrow().snapshot().legendaryResistances());
+        assertEquals(81, captain.hitPoints().current());
+
+        var hound = monster(3, 25, 0, 0, BestiaryPreset.HELL_HOUND);
+        var defender = monster(4, 10, 2, 0, BestiaryPreset.CAPTAIN_MORGAN);
+        var otherBattle = combat(sides -> sides == 20 ? 1 : sides, hound, defender);
+        otherBattle.start();
+        otherBattle.useBreath(hound.id(), defender.cell().center(), 0);
+        assertEquals(1, defender.bestiary().orElseThrow().snapshot().legendaryResistances());
+        assertEquals(67, defender.hitPoints().current());
+    }
+
+    @Test
+    void captainParriesOneMeleeAttackWithHisReaction() {
+        var owlbear = BestiaryPreset.OWLBEAR;
+        var attacker = entry(1, 0, 25, 0, 0, owlbear.maxHp(), owlbear.combatStats(), owlbear.defenses(),
+                new BestiaryTurnState(owlbear));
+        var captain = monster(2, 10, 1, 0, BestiaryPreset.CAPTAIN_MORGAN);
+        var battle = combat(sides -> sides == 20 ? 9 : 1, attacker, captain);
+        battle.start();
+        battle.attack(attacker.id(), captain.id(), 0, 0);
+        assertEquals(85, captain.hitPoints().current());
+        assertFalse(captain.canReact());
+        battle.attack(attacker.id(), captain.id(), 0, 1);
+        assertTrue(captain.hitPoints().current() < 85);
+        assertEquals(1, battle.drainEvents().stream().filter(event -> event.detail().equals("parry")).count());
+    }
+
+    @Test
+    void casterSupportUsesHealingWordOnWoundedBoss() {
+        var caster = monster(1, 20, 0, 0, BestiaryPreset.CULTIST_ACOLYTE);
+        var captain = monster(2, 15, 3, 0, BestiaryPreset.CAPTAIN_MORGAN);
+        var hero = hero(3, 10, 6, 0, false);
+        var combat = combat(sides -> sides, caster, captain, hero);
+        combat.start();
+        combat.damage(hero.id(), captain.id(), Map.of(DamageType5e.FIRE, 45), false);
+        var plan = net.dnd5ecraft.combat.MonsterAiDirector.plan(combat, caster.id());
+        assertEquals("healing_word", plan.spell());
+        assertEquals(captain.id(), plan.target());
+        net.dnd5ecraft.combat.MonsterAiDirector.execute(combat, caster.id(), 0);
+        assertTrue(captain.hitPoints().current() > 40);
+    }
+
+    @Test
     void packTacticsAppliesWhenAnotherConsciousAllyThreatensTheTarget() {
         var wolf = monster(1, 25, 0, 0, BestiaryPreset.WOLF);
         var companion = monster(2, 15, 1, 1, BestiaryPreset.WOLF);

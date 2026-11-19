@@ -229,17 +229,31 @@ public final class DmDirector {
     }
 
     private static void bubble(ServerLevel level, DndNpcEntity npc, Component text) {
+        bubble(level, npc, text, 80);
+    }
+
+    static void battleBark(ServerLevel level, DndNpcEntity npc, String variant) {
+        bubble(level, npc, Component.translatable("dnd-5e-craft.bark." + variant), 50);
+    }
+
+    private static void bubble(ServerLevel level, DndNpcEntity npc, Component text, int duration) {
         var display = EntityType.TEXT_DISPLAY.create(level);
         if (display == null) return;
         var tag = new CompoundTag();
         tag.putString("text", Component.Serializer.toJson(text));
         tag.putString("billboard", "center");
         tag.putInt("line_width", 160);
+        tag.putBoolean("Invulnerable", true);
         var point = npc.position().add(0, npc.getBbHeight() + .35, 0);
         display.load(tag);
         display.setPos(point.x, point.y, point.z);
         var bubbles = BUBBLES.computeIfAbsent(level, ignored -> new ArrayList<>());
+        bubbles.removeIf(existing -> {
+            if (existing.speaker() != npc) return false;
+            existing.display().discard();
+            return true;
+        });
         if (bubbles.size() >= 32) bubbles.remove(0).display().discard();
-        if (level.addFreshEntity(display)) bubbles.add(new Bubble(display, npc, level.getGameTime() + 80));
+        if (level.addFreshEntity(display)) bubbles.add(new Bubble(display, npc, level.getGameTime() + duration));
     }
 }

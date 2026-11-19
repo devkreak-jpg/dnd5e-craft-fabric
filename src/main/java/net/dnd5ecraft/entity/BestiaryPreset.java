@@ -65,7 +65,18 @@ public enum BestiaryPreset {
             BREATH_RECHARGE, MULTIATTACK),
     TAVERN_KEEPER("0", 10, 4, 30, 0, 1f, Kind.HUMANOID, scores(10, 10, 10, 10, 12, 12), List.of()),
     MERCHANT("0", 10, 4, 30, 0, 1f, Kind.HUMANOID, scores(10, 10, 10, 12, 10, 12), List.of()),
-    TOWN_GUARD("0", 16, 11, 30, 0, 1f, Kind.HUMANOID, scores(13, 12, 12, 10, 11, 10), List.of());
+    TOWN_GUARD("0", 16, 11, 30, 0, 1f, Kind.HUMANOID, scores(13, 12, 12, 10, 11, 10), List.of()),
+    GOBLIN_ARCHER("1/4", 13, 9, 30, 60, .8f, Kind.HUMANOID, scores(8, 15, 10, 10, 8, 8),
+            List.of(ranged("Shortbow", 4, 80, 320, 1, 6, 2, PIERCING),
+                    attack("Dagger", 4, 5, 1, 4, 2, PIERCING))),
+    BANDIT_THUG("1/2", 12, 18, 30, 0, 1f, Kind.HUMANOID, scores(14, 11, 13, 9, 10, 9),
+            attack("Mace", 4, 5, 1, 6, 2, BLUDGEONING), PACK_TACTICS),
+    CULTIST_ACOLYTE("1", 12, 19, 30, 0, 1f, Kind.HUMANOID, scores(9, 12, 12, 14, 14, 11),
+            attack("Sickle", 3, 5, 1, 4, 1, SLASHING)),
+    CAPTAIN_MORGAN("5", 16, 85, 30, 0, 1.12f, Kind.HUMANOID, scores(17, 16, 16, 13, 12, 15),
+            List.of(attack("Scimitar", 6, 5, 1, 6, 3, SLASHING),
+                    ranged("Hand Crossbow", 6, 30, 120, 1, 6, 3, PIERCING)),
+            MULTIATTACK, LEGENDARY, BREATH_RECHARGE);
 
     public enum Kind { HUMANOID, BEAST, UNDEAD, ARTHROPOD, GIANT, MONSTROSITY, FIEND, DRAGON }
     public enum Feature { PACK_TACTICS, MAGIC_RESISTANCE, REGENERATION, BREATH_RECHARGE, LEGENDARY, LAIR_ACTION, MULTIATTACK }
@@ -116,8 +127,27 @@ public enum BestiaryPreset {
         return valueOf(id.toUpperCase(Locale.ROOT));
     }
 
+    public NpcCombatRole combatRole() {
+        return switch (this) {
+            case GOBLIN_ARCHER -> NpcCombatRole.RANGED_SKIRMISHER;
+            case CULTIST_ACOLYTE -> NpcCombatRole.CASTER_SUPPORT;
+            case CAPTAIN_MORGAN, ADULT_RED_DRAGON, YOUNG_RED_DRAGON, VAMPIRE -> NpcCombatRole.MINI_BOSS;
+            default -> NpcCombatRole.MELEE_BRUTE;
+        };
+    }
+
+    public int legendaryLimit() { return this == CAPTAIN_MORGAN ? 2 : features.contains(LEGENDARY) ? 3 : 0; }
+
+    private Map<String, Ability> npcSpells() {
+        return this == CULTIST_ACOLYTE
+                ? Map.of("fire_bolt", Ability.WISDOM, "healing_word", Ability.WISDOM, "magic_missile", Ability.WISDOM,
+                        "bane", Ability.WISDOM, "hold_person", Ability.WISDOM)
+                : Map.of();
+    }
+
     public Breath breath() {
         return switch (this) {
+            case CAPTAIN_MORGAN -> new Breath(20, 14, new Dice(4, 6));
             case HELL_HOUND -> new Breath(15, 12, new Dice(6, 6));
             case YOUNG_RED_DRAGON -> new Breath(30, 17, new Dice(16, 6));
             case ADULT_RED_DRAGON -> new Breath(60, 21, new Dice(18, 6));
@@ -137,7 +167,7 @@ public enum BestiaryPreset {
     public int attacksPerAction() {
         return switch (this) {
             case TAVERN_KEEPER, MERCHANT, TOWN_GUARD -> 0;
-            case OWLBEAR, VAMPIRE, VAMPIRE_SPAWN -> 2;
+            case OWLBEAR, VAMPIRE, VAMPIRE_SPAWN, CAPTAIN_MORGAN -> 2;
             case TROLL, ADULT_RED_DRAGON, YOUNG_RED_DRAGON, BANDIT_CAPTAIN -> 3;
             default -> 1;
         };
@@ -220,8 +250,10 @@ public enum BestiaryPreset {
             saves.put(Ability.WISDOM, 7);
             saves.put(Ability.CHARISMA, 11);
         }
-        return new CombatantEntry.Stats(speed, armor, this == ORC || this == GOBLIN || this == SKELETON,
-                darkvision, 1, scores, saves, Map.of(), Map.of(), Set.of(), traits, attacks());
+        return new CombatantEntry.Stats(speed, armor, this == ORC || this == GOBLIN || this == SKELETON || this == CAPTAIN_MORGAN,
+                darkvision, this == CULTIST_ACOLYTE ? 3 : 1, scores, saves,
+                this == CULTIST_ACOLYTE ? Map.of(net.dnd5ecraft.rules.character.ClassType.CLERIC, 3) : Map.of(),
+                npcSpells(), Set.of(), traits, attacks());
     }
 
     private static Map<Ability, Integer> scores(int strength, int dexterity, int constitution, int intelligence,

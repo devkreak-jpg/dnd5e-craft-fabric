@@ -52,17 +52,21 @@ public final class DmDirectorScreen extends DndScreen {
             case NPC -> npc(x, y, col);
         }
         button(text("back"), x, bottom() - 24, 72, this::onClose);
+        button(text("director.build_demo"), left + panelWidth - 160, bottom() - 24, 148, () -> {
+            if (minecraft.player != null) minecraft.player.connection.sendCommand("dnd dm build_demo_map");
+            onClose();
+        }).active = ClientDndState.state().operator();
     }
 
     private void tools(int x, int y, int col, List<Tool> actions) {
-        int perPage = Math.max(1, (panelHeight - 90) / 21) * 3;
+        int perPage = Math.max(1, (panelHeight - 111) / 21) * 3;
         for (int i = 0; i < perPage && page * perPage + i < actions.size(); i++) {
             var tool = actions.get(page * perPage + i);
             button(name("director.tool", tool), x + (i % 3) * (col + 4), y + (i / 3) * 21, col, () -> run(tool, null, 0));
         }
         if (actions.size() > perPage) {
-            button(text("previous"), x + 78, bottom() - 24, 70, () -> { page--; rebuild(); }).active = page > 0;
-            button(text("next"), x + 153, bottom() - 24, 70, () -> { page++; rebuild(); }).active = (page + 1) * perPage < actions.size();
+            button(text("previous"), x + 78, bottom() - 45, 70, () -> { page--; rebuild(); }).active = page > 0;
+            button(text("next"), x + 153, bottom() - 45, 70, () -> { page++; rebuild(); }).active = (page + 1) * perPage < actions.size();
         }
     }
 

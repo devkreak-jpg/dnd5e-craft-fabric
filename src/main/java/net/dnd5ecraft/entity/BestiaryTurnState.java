@@ -9,7 +9,12 @@ import net.dnd5ecraft.rules.equipment.DamageType5e;
 
 public final class BestiaryTurnState {
     public record Snapshot(boolean breathReady, boolean regenerationSuppressed, int legendaryResistances,
-                           int legendaryActions, boolean lairEnabled) {}
+                           int legendaryActions, boolean lairEnabled, boolean bloodied) {
+        public Snapshot(boolean breathReady, boolean regenerationSuppressed, int legendaryResistances,
+                int legendaryActions, boolean lairEnabled) {
+            this(breathReady, regenerationSuppressed, legendaryResistances, legendaryActions, lairEnabled, false);
+        }
+    }
 
     private final BestiaryPreset preset;
     private boolean breathReady;
@@ -17,16 +22,16 @@ public final class BestiaryTurnState {
     private int legendaryResistances;
     private int legendaryActions;
     private boolean lairEnabled;
+    private boolean bloodied;
 
     public BestiaryTurnState(BestiaryPreset preset) {
         this(preset, new Snapshot(preset.features().contains(Feature.BREATH_RECHARGE), false,
-                preset.features().contains(Feature.LEGENDARY) ? 3 : 0,
-                preset.features().contains(Feature.LEGENDARY) ? 3 : 0, false));
+                preset.legendaryLimit(), preset.legendaryLimit(), false));
     }
 
     public BestiaryTurnState(BestiaryPreset preset, Snapshot saved) {
         this.preset = Objects.requireNonNull(preset);
-        int cap = has(Feature.LEGENDARY) ? 3 : 0;
+        int cap = preset.legendaryLimit();
         if (saved.legendaryResistances < 0 || saved.legendaryResistances > cap
                 || saved.legendaryActions < 0 || saved.legendaryActions > cap
                 || (saved.breathReady && !has(Feature.BREATH_RECHARGE))
@@ -39,6 +44,7 @@ public final class BestiaryTurnState {
         legendaryResistances = saved.legendaryResistances;
         legendaryActions = saved.legendaryActions;
         lairEnabled = saved.lairEnabled;
+        bloodied = saved.bloodied;
     }
 
     public BestiaryPreset preset() { return preset; }
@@ -53,7 +59,7 @@ public final class BestiaryTurnState {
     }
 
     public int beginTurn(int currentHp, boolean environmentBlocksRegeneration, IntUnaryOperator roller) {
-        legendaryActions = has(Feature.LEGENDARY) ? 3 : 0;
+        if (preset != BestiaryPreset.CAPTAIN_MORGAN) renewLegendaryActions();
         if (has(Feature.BREATH_RECHARGE) && !breathReady) {
             breathReady = AbilityCheckEngine.rollDie(6, roller) >= 5;
         }
@@ -61,6 +67,15 @@ public final class BestiaryTurnState {
                 && (currentHp > 0 || preset == BestiaryPreset.TROLL);
         regenerationSuppressed = false;
         return regenerates ? preset.regeneration() : 0;
+    }
+
+    public void renewLegendaryActions() { legendaryActions = preset.legendaryLimit(); }
+
+    public boolean enterBloodied(int hp) {
+        if (preset != BestiaryPreset.CAPTAIN_MORGAN || bloodied || hp <= 0 || (long) hp * 2 > preset.maxHp()) return false;
+        bloodied = true;
+        breathReady = true;
+        return true;
     }
 
     public void onDamage(Map<DamageType5e, Integer> damage) {
@@ -88,10 +103,10 @@ public final class BestiaryTurnState {
     }
 
     public void recoverDailyResources() {
-        if (has(Feature.LEGENDARY)) legendaryResistances = 3;
+        legendaryResistances = preset.legendaryLimit();
     }
 
     public Snapshot snapshot() {
-        return new Snapshot(breathReady, regenerationSuppressed, legendaryResistances, legendaryActions, lairEnabled);
+        return new Snapshot(breathReady, regenerationSuppressed, legendaryResistances, legendaryActions, lairEnabled, bloodied);
     }
 }

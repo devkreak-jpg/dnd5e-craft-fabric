@@ -66,6 +66,7 @@ public final class DndNpcEntity extends PathfinderMob {
     private net.minecraft.world.phys.Vec3 stationaryPosition;
     private int wanderRadius = 8;
     private int patrolIndex;
+    private long lastLegendaryDay = Long.MIN_VALUE;
     private final java.util.List<net.minecraft.core.BlockPos> patrol = new java.util.ArrayList<>();
     private long nextWalk;
 
@@ -93,7 +94,16 @@ public final class DndNpcEntity extends PathfinderMob {
 
     @Override public void aiStep() {
         super.aiStep();
-        if (level().isClientSide || isNoAi() || TacticalCombat.isLocked(this) || possessingDmUuid().isPresent()) return;
+        if (level().isClientSide) return;
+        if (preset() == BestiaryPreset.CAPTAIN_MORGAN) {
+            long day = Math.floorDiv(level().getDayTime(), 24_000L);
+            if (lastLegendaryDay == Long.MIN_VALUE) lastLegendaryDay = day;
+            else if (day > lastLegendaryDay) {
+                bestiary.recoverDailyResources();
+                lastLegendaryDay = day;
+            }
+        }
+        if (isNoAi() || TacticalCombat.isLocked(this) || possessingDmUuid().isPresent()) return;
         if (home == null) home = blockPosition();
         if (behavior == NpcBehaviorMode.DM_COMMANDED || level().getGameTime() < nextWalk) return;
         if (behavior == NpcBehaviorMode.STATIONARY) {
@@ -173,13 +183,20 @@ public final class DndNpcEntity extends PathfinderMob {
 
     public void setPossessingDm(UUID player) { entityData.set(POSSESSOR, Optional.ofNullable(player)); }
 
-    public void setAppearance(String skinId, float scale) {
+    public NpcCombatRole combatRole() { return preset().combatRole(); }
+
+    public static net.minecraft.resources.ResourceLocation validatedSkin(String skinId) {
         var id = net.minecraft.resources.ResourceLocation.tryParse(skinId);
         if (!skinId.isEmpty() && (id == null || !java.util.Set.of("minecraft", "dnd-5e-craft").contains(id.getNamespace())
                 || !id.getPath().startsWith("textures/entity/") || !id.getPath().endsWith(".png")
                 || id.getPath().contains(".."))) {
             throw new IllegalArgumentException("Choose a local entity texture");
         }
+        return skinId.isEmpty() ? null : id;
+    }
+
+    public void setAppearance(String skinId, float scale) {
+        var id = validatedSkin(skinId);
         if (!Float.isFinite(scale) || scale < .3f || scale > 4f) throw new IllegalArgumentException("Scale must be 0.3–4.0");
         entityData.set(SKIN, skinId.isEmpty() ? "" : id.toString());
         entityData.set(SCALE, scale);
@@ -210,6 +227,7 @@ public final class DndNpcEntity extends PathfinderMob {
         applyPreset(preset);
         setDialogue(BestiaryRegistry5e.starterDialogue(preset));
         bestiary = new BestiaryTurnState(preset);
+        lastLegendaryDay = Long.MIN_VALUE;
         death = DeathSaveTracker.CONSCIOUS;
         syncCombatHealth(new HitPoints(preset.maxHp(), preset.maxHp(), 0, 0), DeathSaveTracker.CONSCIOUS);
         setCustomName(Component.translatable("entity.dnd-5e-craft.npc." + preset.id()));
@@ -314,6 +332,8 @@ public final class DndNpcEntity extends PathfinderMob {
         tag.putInt("DndLegendaryResistances", state.legendaryResistances());
         tag.putInt("DndLegendaryActions", state.legendaryActions());
         tag.putBoolean("DndLair", state.lairEnabled());
+        tag.putBoolean("DndBloodied", state.bloodied());
+        if (lastLegendaryDay != Long.MIN_VALUE) tag.putLong("DndLegendaryDay", lastLegendaryDay);
 
         HitPoints health = tacticalHealth();
         tag.putInt("DndHp", health.current());
@@ -345,19 +365,20 @@ public final class DndNpcEntity extends PathfinderMob {
         }
         applyPreset(preset);
         dialogue = BestiaryRegistry5e.starterDialogue(preset);
-        if (tag.contains("DndScale", Tag.TAG_FLOAT)) {
+        if (tag.contains("DndScale", Tag.TAG_FLOAT) || tag.contains("DndSkin", Tag.TAG_STRING)) {
             try {
-                setAppearance(tag.getString("DndSkin"), tag.getFloat("DndScale"));
+                setAppearance(tag.getString("DndSkin"), tag.contains("DndScale") ? tag.getFloat("DndScale") : preset.scale());
             } catch (IllegalArgumentException invalidAppearance) {
                 reportInvalid("appearance", invalidAppearance);
             }
         }
         bestiary = new BestiaryTurnState(preset);
+        lastLegendaryDay = tag.contains("DndLegendaryDay") ? tag.getLong("DndLegendaryDay") : Long.MIN_VALUE;
         if (tag.contains("DndBreathReady")) {
             try {
                 bestiary = new BestiaryTurnState(preset, new BestiaryTurnState.Snapshot(tag.getBoolean("DndBreathReady"),
                         tag.getBoolean("DndRegenBlocked"), tag.getInt("DndLegendaryResistances"),
-                        tag.getInt("DndLegendaryActions"), tag.getBoolean("DndLair")));
+                        tag.getInt("DndLegendaryActions"), tag.getBoolean("DndLair"), tag.getBoolean("DndBloodied")));
             } catch (IllegalArgumentException invalidState) {
                 reportInvalid("bestiary resources", invalidState);
             }
