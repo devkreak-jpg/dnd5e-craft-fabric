@@ -32,6 +32,13 @@ public final class CombatInspector {
 
     public static void clear() { requested = encounter = null; preview = null; nextQuery = 0; }
 
+    static boolean canInspect(Combat combat, UUID target, boolean eligibleOutsider) {
+        var actor = combat.creature(combat.controlledActor());
+        if (actor == null) return false;
+        var entry = combat.creature(target);
+        return entry == null ? eligibleOutsider : entry.team() != actor.team();
+    }
+
     static void render(GuiGraphics g, Minecraft client, Combat combat) {
         if (combat == null || !combat.ownsTurn() || client.screen != null
                 || !client.player.getUUID().equals(combat.controlledActor()) || combat.attacks().isEmpty()) {
@@ -40,10 +47,8 @@ public final class CombatInspector {
         }
         var ray = ClientActions.crosshair(32);
         if (!(ray instanceof net.minecraft.world.phys.EntityHitResult hit) || !(hit.getEntity() instanceof LivingEntity target) || !target.isAlive() || target.isInvisibleTo(client.player)) return;
-        var entry = combat.creature(target.getUUID());
-        if (combat.reaction() != null) return;
-        if (entry == null ? !(target instanceof DndNpcEntity || target instanceof Enemy)
-                : entry.team() == combat.creature(combat.controlledActor()).team()) return;
+        if (combat.reaction() != null
+                || !canInspect(combat, target.getUUID(), target instanceof DndNpcEntity || target instanceof Enemy)) return;
         int index = ClientActions.attackProfile();
         long now = Util.getMillis();
         if (!combat.id().equals(encounter) || round != combat.round() || !target.getUUID().equals(requested) || profile != index) {

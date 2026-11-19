@@ -37,8 +37,8 @@ tasks.named('test') {
 }
 
 sourceSets.test {
-	compileClasspath += sourceSets.main.compileClasspath
-	runtimeClasspath += sourceSets.main.runtimeClasspath
+	compileClasspath += sourceSets.client.output + sourceSets.client.compileClasspath
+	runtimeClasspath += sourceSets.client.output + sourceSets.client.runtimeClasspath
 }
 
 processResources {
