@@ -1,0 +1,5 @@
+package net.dnd5ecraft.rules.spells;
+
+public enum SpellSchool {
+    ABJURATION, CONJURATION, DIVINATION, ENCHANTMENT, EVOCATION, ILLUSION, NECROMANCY, TRANSMUTATION
+}

@@ -1,14 +1,14 @@
 {
-	"required": true,
-	"package": "com.example.mixin",
-	"compatibilityLevel": "JAVA_17",
-	"mixins": [
-		"ExampleMixin"
-	],
-	"injectors": {
-		"defaultRequire": 1
-	},
-	"overwrites": {
-		"requireAnnotations": true
-	}
+  "required": true,
+  "package": "net.dnd5ecraft.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "mixins": [
+    "EntityScaleMixin",
+    "LivingEntityCombatMixin",
+    "PlayerCharacterMixin",
+    "PlayerMovementLockMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
 }

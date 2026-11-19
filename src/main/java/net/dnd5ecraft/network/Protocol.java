@@ -1,0 +1,82 @@
+package net.dnd5ecraft.network;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import net.dnd5ecraft.combat.GridMovementTracker.Cell;
+import net.dnd5ecraft.combat.ReactionWindowManager.Kind;
+import net.dnd5ecraft.combat.TurnEconomy.Resource;
+import net.dnd5ecraft.dialogue.NpcAttitude;
+import net.dnd5ecraft.entity.BestiaryPreset;
+import net.dnd5ecraft.entity.TriggerZoneSpec;
+import net.dnd5ecraft.network.PacketPolicy.TurnToken;
+import net.dnd5ecraft.rules.ability.Skill;
+import net.dnd5ecraft.rules.conditions.ConditionType;
+import net.dnd5ecraft.rules.conditions.DeathSaveTracker;
+import net.dnd5ecraft.rules.spells.AoEGeometry.Vec3;
+
+public final class Protocol {
+    public static final int VERSION = 2;
+    public static final int MAX_REQUEST = 16_000;
+    public static final int MAX_COMBATANTS = 64;
+    public static final int MAX_CELLS = 4096;
+    public static final int MAX_SPELL_TARGETS = 16;
+    public static final int MAX_UPDATE = 180_000;
+
+    public enum Update { STATE, SHEET, ROLL, PING, DIALOGUE, DIALOGUE_END, NPC, ZONE, DRAFT_ROLL, NOTICE, DAMAGE, PARTY, CINEMATIC_BANNER, PASSIVE_DETECTION_GLINT }
+    public enum AbilityMethod { POINT_BUY, STANDARD_ARRAY, ROLLED }
+
+    public record Creature(UUID id, String name, int team, int initiative, Cell cell, int hp, int maxHp,
+                           int temporary, int armor, int reach, DeathSaveTracker.State life, Set<ConditionType> conditions) {
+        public Creature { conditions = Set.copyOf(conditions); }
+    }
+    public record Slots(List<Integer> regular, List<Integer> pact) {
+        public Slots { regular = List.copyOf(regular); pact = List.copyOf(pact); }
+
+        public int available(int level, boolean usePact) {
+            return level >= 1 && level <= 9 ? (usePact ? pact : regular).get(level - 1) : 0;
+        }
+    }
+    public record Reaction(long id, int millisecondsLeft, List<Kind> choices) {
+        public Reaction { choices = List.copyOf(choices); }
+    }
+    public record Combat(UUID id, UUID controlledActor, UUID activeActor, int round, boolean paused,
+                         List<Creature> initiative, Set<Resource> resources, int movement,
+                         Map<Cell, Integer> reachable, Map<Cell, List<UUID>> threats, List<String> attacks,
+                         List<String> spells, Slots slots, Reaction reaction) {
+        public Combat {
+            initiative = List.copyOf(initiative);
+            if (initiative.isEmpty() || initiative.stream().noneMatch(entry -> entry.id().equals(controlledActor))
+                    || initiative.stream().noneMatch(entry -> entry.id().equals(activeActor))) {
+                throw new IllegalArgumentException("Combat actor is missing from the synchronized roster");
+            }
+            resources = Set.copyOf(resources);
+            reachable = Map.copyOf(reachable);
+            threats = Map.copyOf(threats);
+            attacks = List.copyOf(attacks);
+            spells = List.copyOf(spells);
+        }
+
+        public boolean ownsTurn() { return controlledActor.equals(activeActor) && !paused; }
+        public TurnToken turn() { return new TurnToken(id, activeActor, round); }
+        public Creature creature(UUID id) { return initiative.stream().filter(actor -> actor.id().equals(id)).findFirst().orElse(null); }
+    }
+
+    public record State(boolean operator, boolean dm, int darkvision, Combat combat) {}
+    public record DialogueOption(String id, String label, Skill skill, int dc) {}
+    public record Dialogue(UUID token, String title, String text, NpcAttitude attitude, List<DialogueOption> options) {
+        public Dialogue { options = List.copyOf(options); }
+    }
+    public record Npc(UUID id, long revision, String name, BestiaryPreset preset, NpcAttitude attitude, boolean lair,
+                      String greeting, List<DialogueOption> opening) {
+        public Npc { opening = List.copyOf(opening); }
+    }
+    public record Zone(Cell marker, long revision, TriggerZoneSpec spec, boolean armed) {}
+    public record PartyMember(UUID id, String name, int level, int hp, int maxHp, int temporary, int armor,
+            DeathSaveTracker.State life) {}
+
+    public record Roll(UUID player, String name, Vec3 position, int result, long seed) {}
+
+    private Protocol() {}
+}

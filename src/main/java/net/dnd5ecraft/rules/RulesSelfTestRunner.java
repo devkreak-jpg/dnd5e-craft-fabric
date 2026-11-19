@@ -1,0 +1,198 @@
+package net.dnd5ecraft.rules;
+
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntUnaryOperator;
+import net.dnd5ecraft.combat.EncounterDifficultyCalculator;
+import net.dnd5ecraft.rules.ability.Ability;
+import net.dnd5ecraft.rules.ability.AbilityCheckEngine;
+import net.dnd5ecraft.rules.ability.AbilityCheckEngine.CheckResult;
+import net.dnd5ecraft.rules.ability.AbilityCheckEngine.RollMode;
+import net.dnd5ecraft.rules.ability.DiceRoller;
+import net.dnd5ecraft.rules.ability.PassiveSenseTracker;
+import net.dnd5ecraft.rules.ability.ProficiencyLevel;
+import net.dnd5ecraft.rules.ability.Skill;
+import net.dnd5ecraft.rules.character.ClassFeature;
+import net.dnd5ecraft.rules.character.ClassType;
+import net.dnd5ecraft.rules.character.MulticlassValidator;
+import net.dnd5ecraft.rules.character.PointBuyCalculator;
+import net.dnd5ecraft.rules.character.RaceType;
+import net.dnd5ecraft.rules.conditions.DeathSaveTracker;
+import net.dnd5ecraft.rules.equipment.ArmorFormulaEngine;
+import net.dnd5ecraft.rules.equipment.ArmorFormulaEngine.Formula;
+import net.dnd5ecraft.rules.equipment.DamagePipeline;
+import net.dnd5ecraft.rules.equipment.DamagePipeline.Defenses;
+import net.dnd5ecraft.rules.equipment.DamagePipeline.HitPoints;
+import net.dnd5ecraft.rules.equipment.DamageType5e;
+import net.dnd5ecraft.rules.equipment.ExhaustionLevel;
+import net.dnd5ecraft.rules.equipment.WeaponStatsRegistry.Weapon;
+import net.dnd5ecraft.rules.spells.AoEGeometry;
+import net.dnd5ecraft.rules.spells.AoEGeometry.Box;
+import net.dnd5ecraft.rules.spells.AoEGeometry.Template;
+import net.dnd5ecraft.rules.spells.AoEGeometry.Vec3;
+import net.dnd5ecraft.rules.spells.ConcentrationManager;
+
+import static net.dnd5ecraft.rules.ability.Ability.*;
+import static net.dnd5ecraft.rules.equipment.DamageType5e.*;
+
+public final class RulesSelfTestRunner {
+    private int checks;
+
+    private RulesSelfTestRunner() {}
+
+    public static void main(String[] arguments) {
+        var runner = new RulesSelfTestRunner();
+        runner.abilities();
+        runner.characters();
+        runner.armor();
+        runner.damage();
+        runner.conditions();
+        runner.geometry();
+        runner.difficulty();
+        System.out.printf("%d assertions passed%n", runner.checks);
+    }
+
+    private void abilities() {
+        check("score 1", -5, Ability.modifier(1));
+        check("score 9", -1, Ability.modifier(9));
+        check("score 10", 0, Ability.modifier(10));
+        check("score 19", 4, Ability.modifier(19));
+        check("score 30", 10, Ability.modifier(30));
+        check("proficiency level 1", 2, ProficiencyLevel.bonusAtLevel(1));
+        check("proficiency level 9", 4, ProficiencyLevel.bonusAtLevel(9));
+        check("proficiency level 20", 6, ProficiencyLevel.bonusAtLevel(20));
+        check("Jack of All Trades", 2, AbilityCheckEngine.jackOfAllTrades(2, 9, ProficiencyLevel.NONE));
+        check("Jack of All Trades preserves proficiency", 4, AbilityCheckEngine.jackOfAllTrades(2, 9, ProficiencyLevel.PROFICIENT));
+        Map<Skill, Ability> skills = Map.ofEntries(
+                Map.entry(Skill.ACROBATICS, DEX), Map.entry(Skill.ANIMAL_HANDLING, WIS), Map.entry(Skill.ARCANA, INT),
+                Map.entry(Skill.ATHLETICS, STR), Map.entry(Skill.DECEPTION, CHA), Map.entry(Skill.HISTORY, INT),
+                Map.entry(Skill.INSIGHT, WIS), Map.entry(Skill.INTIMIDATION, CHA), Map.entry(Skill.INVESTIGATION, INT),
+                Map.entry(Skill.MEDICINE, WIS), Map.entry(Skill.NATURE, INT), Map.entry(Skill.PERCEPTION, WIS),
+                Map.entry(Skill.PERFORMANCE, CHA), Map.entry(Skill.PERSUASION, CHA), Map.entry(Skill.RELIGION, INT),
+                Map.entry(Skill.SLEIGHT_OF_HAND, DEX), Map.entry(Skill.STEALTH, DEX), Map.entry(Skill.SURVIVAL, WIS));
+        check("skill count", 18, Skill.values().length);
+        for (Skill skill : Skill.values()) check(skill.name(), skills.get(skill), skill.ability());
+        check("passive perception", 14, PassiveSenseTracker.score(4, RollMode.NORMAL));
+        check("passive investigation with advantage", 17, PassiveSenseTracker.score(2, RollMode.ADVANTAGE));
+        check("passive insight with disadvantage", 8, PassiveSenseTracker.score(3, RollMode.DISADVANTAGE));
+        check("halfling rerolls natural one", 16, RaceType.HALFLING.naturalD20(dice(1, 16)));
+        check("lucky rerolls only once", 1, new DiceRoller(dice(1, 1, 20)).d20(RollMode.NORMAL, 0, true).total());
+        check("great weapon fighting rerolls only once", 8, new DiceRoller(dice(1, 2, 6)).roll("2d6", false, true).total());
+        check("4d6 keep three", 15, new DiceRoller(dice(1, 4, 5, 6)).roll("4d6kh3").total());
+        check("dice with flat bonus", 11, new DiceRoller(dice(2, 6)).roll("2d6+3").total());
+        check("seed repeatability", new DiceRoller(31).roll("2d6"), new DiceRoller(31).roll("2d6"));
+        check("help cancels disadvantage", RollMode.NORMAL, AbilityCheckEngine.withHelp(true, false, true));
+        check("group passes exactly half", true, AbilityCheckEngine.groupSucceeds(List.of(new CheckResult(10, 0, 10), new CheckResult(9, 0, 10))));
+        check("contested tie preserves defender", false, AbilityCheckEngine.winsContest(new CheckResult(11, 0, 0), new CheckResult(10, 1, 0)));
+    }
+
+    private void characters() {
+        var stats = new EnumMap<Ability, Integer>(Ability.class);
+        for (Ability ability : Ability.values()) stats.put(ability, PointBuyCalculator.STANDARD_ARRAY.get(ability.ordinal()));
+        check("standard array", true, PointBuyCalculator.isStandardArray(stats));
+        check("27 point buy", 0, PointBuyCalculator.pointsRemaining(stats));
+        stats.put(STR, 8);
+        stats.put(DEX, 13);
+        check("fighter alternate prerequisite", true, MulticlassValidator.qualifies(ClassType.FIGHTER, stats));
+        check("paladin dual requirement", false, MulticlassValidator.qualifies(ClassType.PALADIN, stats));
+        check("combined caster level", 5, MulticlassValidator.spellcasterLevel(Map.of(ClassType.WIZARD, 3, ClassType.PALADIN, 4)));
+        check("fighter extra attack", 3, ClassType.FIGHTER.attacks(11));
+        check("paladin lay on hands", 20, ClassFeature.LAY_ON_HANDS.capacity(Map.of(ClassType.PALADIN, 4), 0, RaceType.HUMAN));
+    }
+
+    private void armor() {
+        check("unarmored", 14, ac(Formula.UNARMORED, false, false));
+        check("barbarian defense", 17, ac(Formula.BARBARIAN, false, false));
+        check("monk defense", 16, ac(Formula.MONK, false, false));
+        check("mage armor", 17, ac(Formula.MAGE_ARMOR, false, false));
+        check("light armor", 15, ac(Formula.LEATHER, false, false));
+        check("medium armor", 16, ac(Formula.BREASTPLATE, false, false));
+        check("medium armor master", 17, ac(Formula.BREASTPLATE, false, true));
+        check("heavy armor", 18, ac(Formula.PLATE, false, false));
+        check("shield", 20, ac(Formula.PLATE, true, false));
+        check("heavy armor hinders stealth", true, Formula.PLATE.stealthDisadvantage());
+        check("heavy armor speed penalty", 10, Formula.PLATE.speedPenaltyFeet(14, false));
+        check("dwarf ignores heavy armor speed penalty", 0, Formula.PLATE.speedPenaltyFeet(8, true));
+    }
+
+    private void damage() {
+        var hp = new HitPoints(10, 10, 3, 2, 4);
+        check("immunity", 0, new Defenses(Set.of(FIRE), Set.of(), Set.of()).adjust(FIRE, 33));
+        check("resistance rounds down", 3, new Defenses(Set.of(), Set.of(FIRE), Set.of()).adjust(FIRE, 7));
+        check("vulnerability", 14, new Defenses(Set.of(), Set.of(), Set.of(FIRE)).adjust(FIRE, 7));
+        var delta = DamagePipeline.apply(Map.of(FIRE, 12), Defenses.NONE, hp);
+        check("ward precedes beast HP", 2, delta.wardAbsorbed());
+        check("beast precedes temp HP", 4, delta.beastAbsorbed());
+        check("temp HP precedes character HP", 3, delta.temporaryAbsorbed());
+        check("beast overflow", 7, delta.remaining().current());
+        check("temporary HP does not stack", 3, hp.grantTemporary(2).temporary());
+        var humanoid = new HitPoints(5, 10, 0, 0);
+        var enduring = DamagePipeline.apply(Map.of(FIRE, 5), Defenses.NONE, humanoid, true);
+        check("Relentless Endurance uses its charge", true, enduring.enduranceUsed());
+        check("Relentless Endurance leaves a single hit point", 1, enduring.remaining().current());
+        var lethal = DamagePipeline.apply(Map.of(FIRE, 15), Defenses.NONE, humanoid, true);
+        check("instant death beats Relentless Endurance", DeathSaveTracker.DEAD, DeathSaveTracker.CONSCIOUS.afterDamage(humanoid, lethal, false));
+        var unconscious = DamagePipeline.apply(Map.of(FIRE, 5), Defenses.NONE, humanoid);
+        check("zero HP stays zero", 0, unconscious.remaining().current());
+        check("zero HP is dying", DeathSaveTracker.DYING, DeathSaveTracker.CONSCIOUS.afterDamage(humanoid, unconscious, false));
+        check("critical doubles dice", 12, new DamagePipeline.Dice(1, 6).roll(true, sides -> 6));
+        check("sneak attack with ally", true, DamagePipeline.canSneakAttack(Weapon.DAGGER.stats(), RollMode.NORMAL, true, false));
+        check("sneak attack denied with disadvantage", false, DamagePipeline.canSneakAttack(Weapon.DAGGER.stats(), RollMode.DISADVANTAGE, true, false));
+        check("sneak attack once per turn", false, DamagePipeline.canSneakAttack(Weapon.DAGGER.stats(), RollMode.ADVANTAGE, true, true));
+        check("divine smite against undead", new DamagePipeline.Dice(4, 8), DamagePipeline.divineSmiteDice(2, true));
+        check("concentration minimum", 10, ConcentrationManager.damageDc(17));
+        check("concentration rounds damage down", 11, ConcentrationManager.damageDc(23));
+    }
+
+    private void conditions() {
+        check("natural 1 death save", 2, DeathSaveTracker.DYING.roll(1, 0).tracker().failures());
+        check("natural 20 death save restores 1 HP", 1, DeathSaveTracker.DYING.roll(20, 0).hitPointsRestored());
+        check("three death saves stabilize", DeathSaveTracker.STABLE, new DeathSaveTracker(DeathSaveTracker.State.DYING, 2, 0).roll(10, 0).tracker());
+        check("three failed death saves kill", DeathSaveTracker.DEAD, new DeathSaveTracker(DeathSaveTracker.State.DYING, 0, 2).roll(9, 0).tracker());
+        check("medicine stabilizes", DeathSaveTracker.STABLE, DeathSaveTracker.DYING.medicine(10));
+        check("exhaustion checks", true, ExhaustionLevel.of(1).abilityCheckDisadvantage());
+        check("exhaustion speed", 15, ExhaustionLevel.of(2).speedFeet(30));
+        check("exhaustion attacks", true, ExhaustionLevel.of(3).attackDisadvantage());
+        check("exhaustion max HP", 10, ExhaustionLevel.of(4).maxHitPoints(20));
+        check("exhaustion speed lock", 0, ExhaustionLevel.of(5).speedFeet(30));
+        check("exhaustion death", true, ExhaustionLevel.of(6).dead());
+    }
+
+    private void geometry() {
+        var origin = new Vec3(0, 0, 0);
+        var direction = new Vec3(1, 0, 0);
+        for (AoEGeometry shape : List.of(AoEGeometry.CONE, AoEGeometry.SPHERE, AoEGeometry.CUBE, AoEGeometry.LINE,
+                AoEGeometry.CYLINDER, AoEGeometry.EMANATION)) {
+            double other = shape == AoEGeometry.CYLINDER || shape == AoEGeometry.LINE ? 10 : 0;
+            var area = new Template(shape, 15, other).place(origin, direction, Box.point(origin), true);
+            check(shape + " inside", true, area.contains(new Vec3(1, 0, 0)));
+            check(shape + " outside", false, area.contains(new Vec3(8, 0, 0)));
+        }
+    }
+
+    private void difficulty() {
+        var monster = new EncounterDifficultyCalculator.Monster("1");
+        check("DMG number multiplier", 1.5, EncounterDifficultyCalculator.assess(List.of(3, 3, 3, 3), List.of(monster, monster)).multiplier());
+        check("DMG small group adjustment", 2.0, EncounterDifficultyCalculator.assess(List.of(3, 3), List.of(monster, monster)).multiplier());
+        check("DMG adjusted XP", 600.0, EncounterDifficultyCalculator.assess(List.of(3, 3, 3, 3), List.of(monster, monster)).adjustedXp());
+    }
+
+    private static int ac(Formula formula, boolean shield, boolean mediumArmorMaster) {
+        return ArmorFormulaEngine.armorClass(formula, 18, 16, 14, shield, mediumArmorMaster);
+    }
+
+    private static IntUnaryOperator dice(int... values) {
+        AtomicInteger index = new AtomicInteger();
+        return sides -> values[index.getAndIncrement()];
+    }
+
+    private void check(String label, Object expected, Object actual) {
+        if (!Objects.equals(expected, actual)) throw new AssertionError(label + " expected " + expected + ", got " + actual);
+        checks++;
+        System.out.println("PASS " + label);
+    }
+}

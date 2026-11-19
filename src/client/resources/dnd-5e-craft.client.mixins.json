@@ -1,14 +1,16 @@
 {
-	"required": true,
-	"package": "com.example.client.mixin",
-	"compatibilityLevel": "JAVA_17",
-	"client": [
-		"ExampleClientMixin"
-	],
-	"injectors": {
-		"defaultRequire": 1
-	},
-	"overwrites": {
-		"requireAnnotations": true
-	}
+  "required": true,
+  "package": "net.dnd5ecraft.client.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "client": [
+    "ClientPlayerMoveClampMixin",
+    "CameraRpgMixin",
+    "EntityRenderScaleMixin",
+    "DarkvisionLightmapMixin",
+    "MinecraftInteractionMixin",
+    "KeyboardHandlerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
 }

@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    { "item": "minecraft:amethyst_shard" },
+    { "item": "minecraft:paper" }
+  ],
+  "result": { "item": "dnd-5e-craft:physical_d20" }
+}

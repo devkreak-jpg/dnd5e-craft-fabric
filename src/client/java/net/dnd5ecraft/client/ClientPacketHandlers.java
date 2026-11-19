@@ -1,0 +1,184 @@
+package net.dnd5ecraft.client;
+
+import java.util.function.Consumer;
+import net.dnd5ecraft.client.gui.screen.CharacterCreationScreen;
+import net.dnd5ecraft.client.gui.screen.CharacterSheetScreen;
+import net.dnd5ecraft.client.gui.screen.DialogueScreen;
+import net.dnd5ecraft.client.gui.screen.NpcStudioScreen;
+import net.dnd5ecraft.client.gui.screen.ReactionPromptScreen;
+import net.dnd5ecraft.client.gui.screen.TriggerZoneEditScreen;
+import net.dnd5ecraft.network.ModPackets;
+import net.dnd5ecraft.network.PacketCodec;
+import net.dnd5ecraft.network.PacketPolicy.Action;
+import net.dnd5ecraft.network.Protocol;
+import net.dnd5ecraft.network.Protocol.Update;
+import net.dnd5ecraft.dialogue.NpcAttitude;
+import net.dnd5ecraft.entity.BestiaryPreset;
+import net.dnd5ecraft.rules.character.CharacterSheetData;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
+import net.minecraft.client.Minecraft;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
+
+import static net.dnd5ecraft.network.PacketCodec.*;
+
+public final class ClientPacketHandlers {
+    private ClientPacketHandlers() {}
+
+    public static void register() {
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> client.execute(() -> {
+            ClientDndState.reset();
+            send(Action.SYNC);
+        }));
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(ClientDndState::reset));
+        ClientPlayNetworking.registerGlobalReceiver(ModPackets.UPDATE, (client, handler, buf, response) -> {
+            if (buf.readableBytes() > Protocol.MAX_UPDATE) return;
+            try {
+                if (buf.readVarInt() != Protocol.VERSION) return;
+                Consumer<Minecraft> update = decode(readEnum(buf, Update.class), buf);
+                if (buf.isReadable()) return;
+                client.execute(() -> {
+                    if (client.getConnection() == handler && client.player != null) update.accept(client);
+                });
+            } catch (RuntimeException malformed) {
+                // Ignore protocol or payloads the client cannot decode.
+            }
+        });
+    }
+
+    public static boolean send(Action action) { return send(action, buf -> {}); }
+
+    public static boolean send(Action action, Consumer<FriendlyByteBuf> write) {
+        if (!ClientPlayNetworking.canSend(ModPackets.REQUEST)) {
+            ClientDndState.notify(Component.translatable("dnd-5e-craft.net.unavailable"));
+            return false;
+        }
+        var combat = ClientDndState.combat();
+        if (action.turn() && (combat == null || !combat.ownsTurn())) {
+            ClientDndState.notify(Component.translatable("dnd-5e-craft.net.wait_turn"));
+            return false;
+        }
+        if (action.operator() && !ClientDndState.state().operator()) return false;
+        FriendlyByteBuf buf = PacketByteBufs.create();
+        buf.writeVarInt(Protocol.VERSION);
+        writeEnum(buf, action);
+        if (action.turn()) turn(buf, combat.turn());
+        try {
+            write.accept(buf);
+            if (buf.readableBytes() > Protocol.MAX_REQUEST) throw new IllegalArgumentException("Payload is too large");
+        } catch (RuntimeException invalid) {
+            buf.release();
+            ClientDndState.notify(Component.translatable("dnd-5e-craft.net.payload"));
+            return false;
+        }
+        ClientPlayNetworking.send(ModPackets.REQUEST, buf);
+        return true;
+    }
+
+    private static Consumer<Minecraft> decode(Update kind, FriendlyByteBuf buf) {
+        return switch (kind) {
+            case STATE -> {
+                var snapshot = state(buf);
+                yield client -> {
+                    ClientDndState.state(snapshot);
+                    var combat = snapshot.combat();
+                    if (client.screen != null && combat != null && combat.reaction() != null
+                            && ClientDndState.reactionRemaining() > 0) {
+                        if (client.screen instanceof ReactionPromptScreen prompt) {
+                            if (!prompt.matches(combat.id(), combat.reaction().id())) {
+                                client.setScreen(new ReactionPromptScreen(prompt.previous(), combat.id(), combat.reaction()));
+                            }
+                        } else client.setScreen(new ReactionPromptScreen(client.screen, combat.id(), combat.reaction()));
+                    }
+                };
+            }
+            case SHEET -> {
+                boolean open = buf.readBoolean();
+                var nbt = buf.readNbt();
+                var sheet = nbt == null ? null : CharacterSheetData.fromNbt(nbt);
+                int armor = buf.readVarInt();
+                yield client -> {
+                    ClientDndState.sheet(sheet, armor);
+                    if (open) openSheet();
+                };
+            }
+            case DRAFT_ROLL -> {
+                var rolled = readList(buf, 6, FriendlyByteBuf::readVarInt);
+                yield client -> {
+                    ClientDndState.draft(rolled);
+                    if (client.screen instanceof CharacterCreationScreen creation) creation.receiveRoll(rolled);
+                };
+            }
+            case ROLL -> {
+                var roll = roll(buf);
+                yield ignored -> ClientDndState.roll(roll);
+            }
+            case PING -> {
+                var cell = cell(buf);
+                var player = buf.readUtf(80);
+                yield ignored -> ClientDndState.ping(cell, player);
+            }
+            case DIALOGUE -> {
+                var dialogue = new Protocol.Dialogue(buf.readUUID(), buf.readUtf(80), buf.readUtf(1024),
+                        readEnum(buf, NpcAttitude.class), readList(buf, 12, PacketCodec::dialogueOption));
+                yield client -> client.setScreen(new DialogueScreen(dialogue));
+            }
+            case DIALOGUE_END -> {
+                var token = buf.readUUID();
+                yield client -> {
+                    if (client.screen instanceof DialogueScreen screen && screen.token().equals(token)) client.setScreen(null);
+                };
+            }
+            case NPC -> {
+                var npc = new Protocol.Npc(buf.readUUID(), buf.readLong(), buf.readUtf(80), readEnum(buf, BestiaryPreset.class),
+                        readEnum(buf, NpcAttitude.class), buf.readBoolean(), buf.readUtf(1024),
+                        readList(buf, 12, PacketCodec::dialogueOption));
+                yield client -> client.setScreen(new NpcStudioScreen(npc));
+            }
+            case ZONE -> {
+                var zone = new Protocol.Zone(cell(buf), buf.readLong(), zoneSpec(buf), buf.readBoolean());
+                yield client -> client.setScreen(new TriggerZoneEditScreen(zone));
+            }
+            case NOTICE -> {
+                var message = buf.readComponent();
+                yield ignored -> ClientDndState.notify(message);
+            }
+            case PARTY -> {
+                var party = readList(buf, Protocol.MAX_COMBATANTS, input -> new Protocol.PartyMember(input.readUUID(),
+                        input.readUtf(80), input.readVarInt(), input.readVarInt(), input.readVarInt(), input.readVarInt(),
+                        input.readVarInt(), readEnum(input, net.dnd5ecraft.rules.conditions.DeathSaveTracker.State.class)));
+                yield ignored -> ClientDndState.party(party);
+            }
+            case CINEMATIC_BANNER -> {
+                var title = buf.readComponent();
+                yield ignored -> ClientDndState.banner(title);
+            }
+            case PASSIVE_DETECTION_GLINT -> {
+                var position = cell(buf);
+                var whisper = buf.readComponent();
+                yield client -> {
+                    if (client.level != null) {
+                        for (int i = 0; i < 10; i++) {
+                            client.level.addParticle(net.minecraft.core.particles.ParticleTypes.END_ROD,
+                                    position.x() + .25 + client.level.random.nextDouble() * .5, position.y() + .65,
+                                    position.z() + .25 + client.level.random.nextDouble() * .5, 0, .04, 0);
+                        }
+                    }
+                    ClientDndState.notify(whisper);
+                };
+            }
+            case DAMAGE -> {
+                int amount = buf.readVarInt();
+                yield ignored -> ClientDndState.damage(amount);
+            }
+        };
+    }
+
+    public static void openSheet() {
+        var client = Minecraft.getInstance();
+        ClientActions.cancelAim();
+        client.setScreen(ClientDndState.sheet() == null ? new CharacterCreationScreen() : new CharacterSheetScreen());
+    }
+}

@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "dnd-5e-craft:block/trigger_zone"
+    }
+  }
+}
