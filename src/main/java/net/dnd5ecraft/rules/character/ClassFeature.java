@@ -5,7 +5,7 @@ import static net.dnd5ecraft.rules.character.ClassType.*;
 
 public enum ClassFeature {
     RAGE, BARDIC_INSPIRATION, CHANNEL_DIVINITY, WILD_SHAPE, SECOND_WIND, ACTION_SURGE,
-    KI_POINTS, LAY_ON_HANDS, SORCERY_POINTS, ARCANE_RECOVERY, ARCANE_WARD, RELENTLESS_ENDURANCE, DRACONIC_BREATH, LUCKY;
+    KI_POINTS, LAY_ON_HANDS, SORCERY_POINTS, ARCANE_RECOVERY, ARCANE_WARD, RELENTLESS_ENDURANCE, DRACONIC_BREATH, LUCKY, ELDRITCH_CANNON, UNLEASH_INCARNATION, CHAOS_POINTS, FINAL_ACT, CAST_OF_DIE, TRITON_FOG;
 
     public int capacity(Map<ClassType, Integer> levels, int charismaModifier, RaceType race) {
         int barbarian = level(levels, BARBARIAN);
@@ -24,6 +24,13 @@ public enum ClassFeature {
             case LAY_ON_HANDS -> level(levels, PALADIN) * 5;
             case SORCERY_POINTS -> level(levels, SORCERER) >= 2 ? level(levels, SORCERER) : 0;
             case LUCKY -> 3;
+            case ELDRITCH_CANNON -> level(levels, ARTIFICER) >= 3 ? 1 : 0;
+            case UNLEASH_INCARNATION -> level(levels, FIGHTER) >= 3 ? 20 : 0;
+            case CHAOS_POINTS -> level(levels, HARLEQUIN) == 0 ? 0
+                    : net.dnd5ecraft.rules.campaign.CampaignRules.chaosLimit(level(levels, HARLEQUIN));
+            case FINAL_ACT -> level(levels, HARLEQUIN) >= 5 ? 1 : 0;
+            case TRITON_FOG -> race == RaceType.TRITON ? 1 : 0;
+            case CAST_OF_DIE -> level(levels, HARLEQUIN) >= 4 ? 1 : 0;
             case ARCANE_WARD -> level(levels, WIZARD) >= 2 ? 1 : 0;
             case ARCANE_RECOVERY -> level(levels, WIZARD) > 0 ? 1 : 0;
             case DRACONIC_BREATH -> race == RaceType.DRAGONBORN ? 1 : 0;
@@ -34,7 +41,7 @@ public enum ClassFeature {
     public boolean shortRest(Map<ClassType, Integer> levels) {
         return switch (this) {
             case BARDIC_INSPIRATION -> level(levels, BARD) >= 5;
-            case CHANNEL_DIVINITY, WILD_SHAPE, SECOND_WIND, ACTION_SURGE, KI_POINTS, DRACONIC_BREATH -> true;
+            case CHANNEL_DIVINITY, WILD_SHAPE, SECOND_WIND, ACTION_SURGE, KI_POINTS, DRACONIC_BREATH, FINAL_ACT -> true;
             default -> false;
         };
     }

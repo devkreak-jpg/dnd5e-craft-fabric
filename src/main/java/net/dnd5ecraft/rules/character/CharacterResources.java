@@ -36,6 +36,14 @@ public record CharacterResources(Map<ClassType, Integer> hitDice, Map<ClassFeatu
         return new CharacterResources(hitDice, updated, inspiration, slots);
     }
 
+    public CharacterResources withSpent(ClassFeature feature, int amount) {
+        if (amount < 0) throw new IllegalArgumentException("Invalid resource expenditure");
+        var updated = new EnumMap<ClassFeature, Integer>(ClassFeature.class);
+        updated.putAll(spent);
+        updated.put(feature, amount);
+        return new CharacterResources(hitDice, updated, inspiration, slots);
+    }
+
     public CharacterResources withInspiration(boolean value) { return new CharacterResources(hitDice, spent, value, slots); }
 
     public CharacterResources spendHitDie(ClassType type) {
@@ -53,6 +61,7 @@ public record CharacterResources(Map<ClassType, Integer> hitDice, Map<ClassFeatu
         remaining.putAll(spent);
         if (longRest) {
             remaining.clear();
+            if (spent.containsKey(ClassFeature.CHAOS_POINTS)) remaining.put(ClassFeature.CHAOS_POINTS, spent.get(ClassFeature.CHAOS_POINTS));
             int recover = Math.max(1, levels.values().stream().mapToInt(Integer::intValue).sum() / 2);
             for (ClassType type : ClassType.values()) {
                 int recovered = Math.min(recover, levels.getOrDefault(type, 0) - dice.getOrDefault(type, 0));

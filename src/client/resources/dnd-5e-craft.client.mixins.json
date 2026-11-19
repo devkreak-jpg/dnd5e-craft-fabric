@@ -8,7 +8,9 @@
     "EntityRenderScaleMixin",
     "DarkvisionLightmapMixin",
     "MinecraftInteractionMixin",
-    "KeyboardHandlerMixin"
+    "KeyboardHandlerMixin",
+    "PlayerRendererMixin",
+    "GuiMixin"
   ],
   "injectors": {
     "defaultRequire": 1

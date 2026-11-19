@@ -142,7 +142,7 @@ public final class TriggerZoneBlockEntity extends BlockEntity {
         var sheet = PlayerSheets.getOrCreate(player);
         var result = PlayerRules.check(player, skill, disarm ? spec.disarmDc() : spec.investigationDc());
         if (disarm) {
-            if (!detected.contains(player.getUUID()) || !player.isHolding(Items.TRIPWIRE_HOOK)) {
+            if (!detected.contains(player.getUUID()) || (!player.isHolding(Items.TRIPWIRE_HOOK) && !player.isHolding(net.dnd5ecraft.item.ModItems.THIEVES_TOOLS))) {
                 throw new IllegalStateException("Locate the trap and hold a tripwire hook as thieves’ tools");
             }
             if (sheet.background().tools().contains("thieves_tools")) {

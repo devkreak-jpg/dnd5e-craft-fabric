@@ -53,6 +53,9 @@ public final class CharacterCreationScreen extends DndScreen {
             idealInput.setResponder(value -> ideal = value);
             bondInput.setResponder(value -> bond = value);
             flawInput.setResponder(value -> flaw = value);
+            button(text("campaign.presets"), x, bottom() - 25, Math.min(140, innerWidth() - 92), () -> {
+                remember(); minecraft.setScreen(new CampaignPresetScreen(this));
+            });
             button(text("next"), x + innerWidth() - 88, bottom() - 25, 88, () -> {
                 remember(); if (!character.isBlank()) { page = 1; rebuild(); }
             });

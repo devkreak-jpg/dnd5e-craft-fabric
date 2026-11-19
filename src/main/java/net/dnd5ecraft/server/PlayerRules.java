@@ -4,6 +4,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.function.IntUnaryOperator;
 import net.dnd5ecraft.entity.DiceDisplaySpawner;
+import net.dnd5ecraft.item.ModItems;
 import net.dnd5ecraft.network.ModPackets;
 import net.dnd5ecraft.rules.ability.Ability;
 import net.dnd5ecraft.rules.ability.AbilityCheckEngine.CheckResult;
@@ -31,7 +32,8 @@ public final class PlayerRules {
 
     public static CheckResult check(ServerPlayer player, Skill skill, int dc) {
         var sheet = PlayerSheets.getOrCreate(player);
-        var roll = new DiceRoller(dice(player)).d20(checkMode(sheet), sheet.skillModifier(skill), lucky(sheet));
+        var roll = new DiceRoller(dice(player)).d20(RollMode.from(sentinel(player, skill), checkMode(sheet) == RollMode.DISADVANTAGE),
+                sheet.skillModifier(skill), lucky(sheet));
         return new CheckResult(roll.kept().get(0), roll.modifier(), dc);
     }
 
@@ -44,7 +46,7 @@ public final class PlayerRules {
 
     public static int passive(ServerPlayer player, Skill skill) {
         var sheet = PlayerSheets.getOrCreate(player);
-        return PassiveSenseTracker.score(sheet.skillModifier(skill), checkMode(sheet));
+        return PassiveSenseTracker.score(sheet.skillModifier(skill), RollMode.from(sentinel(player, skill), checkMode(sheet) == RollMode.DISADVANTAGE));
     }
 
     public static void requestRoll(ServerPlayer player, boolean savingThrow, String name, int dc) {
@@ -79,6 +81,21 @@ public final class PlayerRules {
                 result.kept().toString(), result.modifier(), result.total()));
     }
 
+    private static boolean sentinel(ServerPlayer player, Skill skill) {
+        return skill == Skill.PERCEPTION && player.getOffhandItem().is(ModItems.SENTINEL_SHIELD);
+    }
+
+    public static CheckResult smell(ServerPlayer player, Skill skill, int dc) {
+        if (!net.dnd5ecraft.rules.campaign.CampaignRules.smellSkill(skill)) {
+            throw new IllegalArgumentException("Choose a smell-based skill");
+        }
+        var sheet = PlayerSheets.getOrCreate(player);
+        if (sheet.race() != RaceType.LOXODON) return check(player, skill, dc);
+        var roll = new DiceRoller(dice(player)).d20(RollMode.from(true, checkMode(sheet) == RollMode.DISADVANTAGE),
+                sheet.skillModifier(skill), lucky(sheet));
+        return new CheckResult(roll.kept().get(0), roll.modifier(), dc);
+    }
+
     public static RollMode tabletopMode(ServerPlayer player, Check check, Options options) {
         var sheet = PlayerSheets.get(player).orElse(null);
         boolean disadvantage = TabletopRolls.disadvantaged(sheet, check.kind());
@@ -87,6 +104,11 @@ public final class PlayerRules {
             if (TacticalCombat.isLocked(player)) TacticalCombat.require(player).spendTabletopInspiration(player.getUUID());
             PlayerSheets.set(player, sheet.withResources(sheet.resources().withInspiration(false)));
         }
+        boolean advantage = player.getOffhandItem().is(ModItems.SENTINEL_SHIELD)
+                && (check.kind() == TabletopRolls.Kind.INITIATIVE || check.kind() == TabletopRolls.Kind.SKILL && check.id().equals("PERCEPTION"));
+        if (options.smell() && sheet != null && sheet.race() == RaceType.LOXODON && check.kind() == TabletopRolls.Kind.SKILL
+                && net.dnd5ecraft.rules.campaign.CampaignRules.smellSkill(Skill.valueOf(check.id()))) advantage = true;
+        if (advantage && !options.inspiration()) return RollMode.from(true, disadvantage || options.mode() == RollMode.DISADVANTAGE);
         return TabletopRolls.checkMode(options.mode(), options.inspiration(), disadvantage);
     }
 

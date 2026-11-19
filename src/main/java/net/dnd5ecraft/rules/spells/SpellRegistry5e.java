@@ -144,6 +144,24 @@ public final class SpellRegistry5e {
                 AUTOMATIC, null, ongoing(ZONE, RADIANT, 3, 8, false, 1), CLERIC);
         add(spells, "revivify", "Revivify", 3, NECROMANCY, ACTION, 5, 0, false, false, CREATURES, 1, null,
                 AUTOMATIC, null, effect(REVIVE), CLERIC, PALADIN);
+        add(spells, "mending", "Mending", 0, TRANSMUTATION, ACTION, 5, 0, false, false, SELF, 1, null,
+                AUTOMATIC, null, effect(UTILITY), ARTIFICER, WIZARD);
+        add(spells, "message", "Message", 0, TRANSMUTATION, ACTION, 120, 0, false, false, CREATURES, 1, null,
+                AUTOMATIC, null, effect(UTILITY), ARTIFICER, WIZARD);
+        add(spells, "prestidigitation", "Prestidigitation", 0, TRANSMUTATION, ACTION, 10, 0, false, false, SELF, 1, null,
+                AUTOMATIC, null, effect(UTILITY), ARTIFICER, WIZARD);
+        add(spells, "lightning_lure", "Lightning Lure", 0, EVOCATION, ACTION, 15, 0, false, false, CREATURES, 1, null,
+                SAVE_NEGATES, Ability.STRENGTH, cantrip(LIGHTNING, 8, PULL_TEN_FEET), ARTIFICER, WIZARD);
+        add(spells, "booming_blade", "Booming Blade", 0, EVOCATION, ACTION, 5, 1, false, false, CREATURES, 1, null,
+                ATTACK, null, damage(THUNDER, 0, 0, 0, 0, BOOM_ON_MOVE), ARTIFICER, WIZARD);
+        add(spells, "absorb_elements", "Absorb Elements", 1, ABJURATION, REACTION, 0, 1, false, false, SELF, 1, null,
+                AUTOMATIC, null, effect(ABSORB), ARTIFICER, WIZARD);
+        add(spells, "grease", "Grease", 1, CONJURATION, ACTION, 60, 10, false, false, AREA, 1,
+                new Template(CUBE, 10), AUTOMATIC, null, effect(ZONE), ARTIFICER, WIZARD);
+        add(spells, "fog_cloud", "Fog Cloud", 1, CONJURATION, ACTION, 120, 100, true, false, AREA, 1,
+                new Template(SPHERE, 20, 0), AUTOMATIC, null, effect(ZONE), ARTIFICER, WIZARD, DRUID, RANGER);
+        add(spells, "disguise_self", "Disguise Self", 1, ILLUSION, ACTION, 0, 600, false, false, SELF, 1, null,
+                AUTOMATIC, null, effect(UTILITY), ARTIFICER, WIZARD);
         return Collections.unmodifiableMap(spells);
     }
 

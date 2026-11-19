@@ -64,6 +64,15 @@ public final class CombatManager {
         default boolean blocksSight(Cell cell) { return blocksCover(cell); }
         default boolean blocksMagic(Cell cell) { return blocksCover(cell); }
 
+        default boolean canUseWeapon(CombatantEntry actor, CombatantEntry.Attack attack) { return true; }
+        default void weaponHit(CombatantEntry actor, CombatantEntry target, CombatantEntry.Attack attack) {}
+        default boolean canSwap(CombatantEntry mover, CombatantEntry other) { return canOccupy(mover, other.cell()); }
+        default Cell echoCell(CombatantEntry actor) { return null; }
+        default void echoSwing(CombatantEntry actor) {}
+        default boolean nettable(CombatantEntry target) { return true; }
+        default void spellVisual(String id, CombatantEntry caster, CombatantEntry target) {}
+        default void zoneVisual(String id, Area area) {}
+
         default boolean manualDeathSaves(CombatantEntry target) { return false; }
 
         default boolean suppressesRegeneration(CombatantEntry target) { return false; }
@@ -80,7 +89,7 @@ public final class CombatManager {
         WEAPON_STRIKE, MOVE_MOONBEAM, RETARGET_MARK, BREAK_WEB, QUICKEN_SPELL, SORCERY_SLOT, OFFHAND, POWER_ATTACK, SMITE
     }
 
-    public enum EventType { TURN, MOVED, HIT, MISS, DAMAGE, HEAL, CAST, COUNTERED, CONCENTRATION_ENDED, DEATH_SAVE, BESTIARY }
+    public enum EventType { TURN, MOVED, HIT, MISS, DAMAGE, HEAL, CAST, COUNTERED, CONCENTRATION_ENDED, DEATH_SAVE, BESTIARY, CAMPAIGN }
 
     public record Event(EventType type, UUID actor, UUID target, String detail, int value) {}
 
@@ -113,6 +122,7 @@ public final class CombatManager {
     private final IntUnaryOperator roller;
     private final CombatSpellZoneResolver spells;
     private final CombatManeuverResolver maneuvers;
+    private final CampaignCombat campaign;
     private final ReactionWindowManager reactions;
     private final List<Event> events = new ArrayList<>();
     private Pending pending;
@@ -132,10 +142,15 @@ public final class CombatManager {
         this.roller = Objects.requireNonNull(roller);
         this.spells = new CombatSpellZoneResolver(this, encounter, roller, world);
         this.maneuvers = new CombatManeuverResolver(this, encounter, roller);
+        this.campaign = new CampaignCombat(this, encounter, roller);
     }
 
     CombatSpellZoneResolver spells() { return spells; }
     CombatManeuverResolver maneuvers() { return maneuvers; }
+    boolean canUseWeapon(CombatantEntry actor, CombatantEntry.Attack attack) { return world.canUseWeapon(actor, attack); }
+    void weaponHit(CombatantEntry actor, CombatantEntry defender, CombatantEntry.Attack attack) { world.weaponHit(actor, defender, attack); }
+    boolean nettable(CombatantEntry target) { return world.nettable(target); }
+    CampaignCombat campaign() { return campaign; }
     long turnSequence() { return turnSequence; }
     long nextEffectId() { return ++effectSequence; }
 
@@ -153,6 +168,7 @@ public final class CombatManager {
 
     public void start(Set<UUID> surprised) {
         lairActionRound = 0;
+        campaign.atInitiative();
         for (CombatantEntry entry : encounter.initiativeOrder()) entry.surprised = surprised.contains(entry.id()) && !entry.feat(FeatType.ALERT);
         beginTurn(encounter.begin());
     }
@@ -239,6 +255,7 @@ public final class CombatManager {
         current.tookAttackAction = false;
         current.turn.startTurn();
         maneuvers.beginTurn(current);
+        CampaignCombat.beginTurn(current);
         spells.beginTurn(current);
         current.hasteAction = current.has(Effect.HASTE);
         if (!current.dead()) current.bestiary().ifPresent(state -> {
@@ -285,6 +302,124 @@ public final class CombatManager {
         entry.characterResources = entry.characterResources.withInspiration(false);
     }
 
+    public CombatantEntry.View campaignView(UUID id) { return encounter.require(id).view(); }
+
+    public void campaignTurn(UUID id, long time) { requireIdle(time); acting(id); }
+
+    public void campaignSpend(UUID id, Resource resource, long time) {
+        requireIdle(time);
+        CombatManeuverResolver.spend(acting(id), resource);
+    }
+
+    public void campaignEchoMove(UUID id, long time) {
+        requireIdle(time);
+        var entry = acting(id);
+        if (entry.echoMoved) throw new IllegalStateException("Echo already moved this turn");
+        entry.echoMoved = true;
+    }
+
+    public void payCampaignSpell(UUID id, int slot, ClassFeature racial, long time) {
+        requireIdle(time);
+        var actor = acting(id);
+        boolean free = racial != null && actor.remaining(racial) > 0;
+        if (!free && slot > 0 && actor.slots.available(Pool.REGULAR, slot) == 0) throw new IllegalStateException("No spell slots remain");
+        CombatManeuverResolver.spend(actor, Resource.ACTION);
+        if (free) actor.spend(racial, 1);
+        else if (slot > 0) actor.slots.spend(Pool.REGULAR, slot);
+    }
+
+    public void validateCannonPayment(UUID id) {
+        var actor = encounter.require(id);
+        if (actor.remaining(ClassFeature.ELDRITCH_CANNON) == 0 && actor.slots.available(Pool.REGULAR, 1) == 0) {
+            throw new IllegalStateException("A first-level slot is required");
+        }
+    }
+
+    public void payCannon(UUID id) {
+        validateCannonPayment(id);
+        var actor = encounter.require(id);
+        if (actor.remaining(ClassFeature.ELDRITCH_CANNON) > 0) actor.spend(ClassFeature.ELDRITCH_CANNON, 1);
+        else actor.slots.spend(Pool.REGULAR, 1);
+    }
+
+    public void campaignManeuver(UUID id, net.dnd5ecraft.server.CampaignActions.Action action, UUID target, Cell point,
+                                 int option, long time) {
+        requireIdle(time);
+        var actor = action == net.dnd5ecraft.server.CampaignActions.Action.AUDIENCE_LAUGHTER ? encounter.require(id) : acting(id);
+        campaign.action(actor, action, target, point, option, time);
+    }
+
+    public UUID directorScenePair(UUID target, Cell second, long time) {
+        requireIdle(time);
+        return campaign.directorPair(target, second);
+    }
+
+    public boolean campaignSave(UUID receiver, Ability ability, int dc) { return save(encounter.require(receiver), ability, dc, 0, false, true); }
+    public boolean campaignHit(UUID source, UUID target, int bonus) {
+        var actor = encounter.require(source);
+        var defender = encounter.require(target);
+        var hit = maneuvers.rollAttack(actor, defender, bonus, true, false, false);
+        return hit.outcome() != DamagePipeline.AttackOutcome.MISS;
+    }
+
+    public void castTritonFog(UUID caster, Cell point, long time) { spells.castTritonFog(caster, point.center(), time); }
+
+    public void restoreFromVanillaMagic(UUID actor, int amount) {
+        var target = encounter.require(actor);
+        if (!target.dead()) heal(target, target, amount);
+    }
+
+    public void campaignTempHp(UUID receiver, int amount) {
+        var actor = encounter.require(receiver);
+        actor.hp = actor.hp.grantTemporary(amount);
+    }
+
+    public boolean allied(UUID first, UUID second) {
+        return encounter.find(first).flatMap(actor -> encounter.find(second).map(target -> actor.team() == target.team())).orElse(false);
+    }
+
+    public void campaignSwap(UUID actor, Cell destination, int cost, long time) {
+        requireIdle(time);
+        var entry = acting(actor);
+        if (!movementTerrain(entry, false).canOccupy(destination) || !entry.turn.move(cost, entry.speedFeet())) {
+            throw new IllegalArgumentException("Echo swap needs fifteen feet of movement and an open destination");
+        }
+        relocate(entry, destination);
+    }
+
+    void requireSwap(CombatantEntry first, CombatantEntry second) {
+        if (!world.canSwap(first, second) || !world.canSwap(second, first)) {
+            throw new IllegalArgumentException("Swap destination is blocked");
+        }
+    }
+
+    void swapActors(CombatantEntry a, CombatantEntry b) {
+        requireSwap(a, b);
+        var first = a.cell;
+        a.cell = b.cell;
+        b.cell = first;
+        spells.refreshGuardians();
+        maneuvers.releaseEndedGrapples();
+        event(EventType.MOVED, a, a, "", 0);
+        event(EventType.MOVED, b, b, "", 0);
+    }
+
+    public void echoAttack(UUID actor, UUID target, Cell origin, boolean unleash, long time) {
+        requireIdle(time);
+        var user = acting(actor);
+        var defender = encounter.require(target);
+        var attack = user.stats().attacks().stream().filter(CombatantEntry.Attack::melee).findFirst()
+                .orElseThrow(() -> new IllegalStateException("A melee weapon is required"));
+        if (unleash) {
+            int limit = Math.max(0, user.stats().abilityModifier(Ability.CONSTITUTION));
+            int spent = user.characterResources.spent().getOrDefault(ClassFeature.UNLEASH_INCARNATION, 0);
+            if (!user.tookAttackAction || user.unleashedThisAction || spent >= limit) throw new IllegalStateException("Unleash Incarnation is unavailable");
+            maneuvers.attackFrom(user, defender, attack, origin, false, time);
+            user.unleashedThisAction = true;
+            user.characterResources = user.characterResources.withSpent(ClassFeature.UNLEASH_INCARNATION, spent + 1);
+        } else maneuvers.attackFrom(user, defender, attack, origin, true, time);
+    }
+
     public void dash(UUID actor, boolean bonusAction, long nowMillis) {
         requireIdle(nowMillis);
         CombatantEntry current = acting(actor);
@@ -293,6 +428,7 @@ public final class CombatManager {
             current.hasteAction = false;
             current.turn.extraDash();
         } else if (!current.turn.dash(actionResource(bonusAction))) throw new IllegalStateException("Dash resource unavailable");
+        current.campaignDash = true;
     }
 
     public void disengage(UUID actor, boolean bonusAction, long nowMillis) {
@@ -363,11 +499,12 @@ public final class CombatManager {
         List<CombatantEntry> accepted = new ArrayList<>();
         return open(offers, nowMillis, response -> encounter.require(response.reactor).canReact()
                 && response.reaction.slot == 0, response -> accepted.add(encounter.require(response.reactor)),
-                time -> resolveOpportunityAttacks(mover, encounter.initiativeOrder().stream().filter(accepted::contains).toList(),
+                time -> resolveOpportunityAttacks(mover, destination, encounter.initiativeOrder().stream().filter(accepted::contains).toList(),
                         0, time, moment -> {
                             if (mover.turn.move(cost, mover.speedFeet())) {
                                 Cell previous = mover.cell();
-                                relocate(mover, destination);
+                                spells.boomingMovement(mover);
+                                if (mover.hp.current() > 0) relocate(mover, destination);
                                 maneuvers.triggerReadied(mover, previous, moment);
                             }
                         }));
@@ -378,30 +515,48 @@ public final class CombatManager {
     }
 
     private List<UUID> opportunityThreats(CombatantEntry mover, Cell destination) {
-        return OpportunityAttackDetector.leavingReach(mover, destination, Movement.VOLUNTARY,
-                false, encounter.initiativeOrder(), this::canSee).stream()
-                .filter(reactor -> canHarm(reactor, mover) && !cover(reactor, mover).blocksTargeting()
+        return encounter.initiativeOrder().stream()
+                .filter(reactor -> reactor.team() != mover.team() && reactor.canReact() && canHarm(reactor, mover)
                         && (!mover.turn.disengaged() || reactor.feat(FeatType.SENTINEL))
                         && !mover.threatenedByMobile.contains(reactor.id()))
+                .filter(reactor -> opportunityOrigin(reactor, mover, destination) != null)
                 .map(CombatantEntry::id).toList();
     }
 
-    private void resolveOpportunityAttacks(CombatantEntry mover, List<CombatantEntry> reactors, int index,
+    private Cell opportunityOrigin(CombatantEntry reactor, CombatantEntry mover, Cell destination) {
+        if (leavesReach(reactor, reactor.cell(), mover, destination)) return reactor.cell();
+        var echo = echoCell(reactor);
+        return echo != null && leavesReach(reactor, echo, mover, destination) ? echo : null;
+    }
+
+    private boolean leavesReach(CombatantEntry reactor, Cell from, CombatantEntry mover, Cell destination) {
+        int reach = reactor.stats().meleeReachFeet();
+        return from.distanceFeet(mover.cell()) <= reach && from.distanceFeet(destination) > reach
+                && canSeeFrom(reactor, from, mover) && !coverFrom(from, mover).blocksTargeting();
+    }
+
+    private void resolveOpportunityAttacks(CombatantEntry mover, Cell destination, List<CombatantEntry> reactors, int index,
             long nowMillis, LongConsumer after) {
         if (index == reactors.size() || mover.hp.current() == 0) {
             after.accept(nowMillis);
             return;
         }
         CombatantEntry reactor = reactors.get(index);
-        LongConsumer next = time -> resolveOpportunityAttacks(mover, reactors, index + 1, time, after);
-        if (!reactor.canReact() || !canHarm(reactor, mover) || cover(reactor, mover).blocksTargeting()) {
+        LongConsumer next = time -> resolveOpportunityAttacks(mover, destination, reactors, index + 1, time, after);
+        Cell origin = opportunityOrigin(reactor, mover, destination);
+        if (!reactor.canReact() || !canHarm(reactor, mover) || origin == null) {
             next.accept(nowMillis);
             return;
         }
-        Attack attack = reactor.stats().attacks().stream().filter(Attack::melee)
-                .filter(profile -> profile.inRange(reactor.cell().distanceFeet(mover.cell()))).findFirst().orElseThrow();
+        var attack = reactor.stats().attacks().stream().filter(Attack::melee)
+                .filter(profile -> profile.inRange(origin.distanceFeet(mover.cell())) && canUseWeapon(reactor, profile))
+                .findFirst().orElse(null);
+        if (attack == null) {
+            next.accept(nowMillis);
+            return;
+        }
         reactor.turn.spend(Resource.REACTION);
-        maneuvers.strike(reactor, mover, attack, true, nowMillis, next, false, 0, true);
+        maneuvers.strikeFrom(reactor, mover, attack, origin, true, nowMillis, next, false, 0, true, () -> {});
     }
 
     /** Applies forced movement or a teleport without spending movement or provoking. */
@@ -439,6 +594,18 @@ public final class CombatManager {
         }
     }
 
+    void pull(CombatantEntry caster, CombatantEntry target, int squares) {
+        for (int step = 0; step < squares; step++) {
+            var from = target.cell();
+            if (from.distanceFeet(caster.cell()) <= 5) return;
+            var next = new Cell(from.x() + Integer.compare(caster.cell().x(), from.x()), from.y(),
+                    from.z() + Integer.compare(caster.cell().z(), from.z()));
+            var terrain = movementTerrain(target, false);
+            if (!terrain.neighbors(from).contains(next) || !terrain.canStep(from, next)) return;
+            relocate(target, next);
+        }
+    }
+
     Terrain movementTerrain(CombatantEntry mover) { return movementTerrain(mover, true); }
 
     Terrain movementTerrain(CombatantEntry mover, boolean voluntary) {
@@ -462,9 +629,13 @@ public final class CombatManager {
         maneuvers.maneuver(actor, action, targetId, option, point, nowMillis);
     }
 
-    int d20(CombatantEntry user, RollMode mode) { return rolledD20(user, mode).kept(); }
+    int d20(CombatantEntry user, RollMode mode) {
+        int roll = rolledD20(user, mode).kept();
+        campaign.onNatural(user, roll);
+        return roll;
+    }
 
-    private Outcome rolledD20(CombatantEntry user, RollMode mode) {
+    Outcome rolledD20(CombatantEntry user, RollMode mode) {
         boolean halfling = user.race == RaceType.HALFLING;
         if (user.advantageOnNextRoll) mode = RollMode.from(true, mode == RollMode.DISADVANTAGE);
         user.advantageOnNextRoll = false;
@@ -482,6 +653,9 @@ public final class CombatManager {
         return maneuvers.attack(actor, target, profile, nowMillis);
     }
 
+
+    Cell echoCell(CombatantEntry actor) { return world.echoCell(actor); }
+    void echoSwing(CombatantEntry actor) { world.echoSwing(actor); }
 
     CombatantEntry combatant(UUID id) { return encounter.require(id); }
     List<CombatantEntry> combatants() { return encounter.initiativeOrder(); }
@@ -504,7 +678,7 @@ public final class CombatManager {
         if (target.stealth >= 0 && target.stealth > PassiveSenseTracker.score(observer.skillModifier(Skill.PERCEPTION), RollMode.NORMAL)) return false;
         return LightingVisionEvaluator.evaluate(world.lightAt(target.cell()), from.distanceFeet(target.cell()),
                 observer.stats().darkvisionFeet(), observer.stats().traits().contains(Trait.DEVILS_SIGHT) ? 120 : 0,
-                CoverRaycaster.clearRay(eye(from), eye(target), world::blocksSight),
+                CoverRaycaster.clearRay(eye(from), eye(target), cell -> world.blocksSight(cell) || spells.obscures(cell)),
                 observer.conditionEffects().has(ConditionType.BLINDED)).visible();
     }
 
@@ -614,14 +788,43 @@ public final class CombatManager {
     }
 
     boolean save(CombatantEntry target, Ability ability, int dc, int bonus, boolean disadvantage, boolean magic) {
+        var flags = saveFlags(target, ability, disadvantage, magic, false);
+        return finishSave(target, ability, dc, bonus, flags.automaticFailure(), flags.automaticFailure() ? 0 : d20(target, flags.mode()));
+    }
+
+    boolean saveAgainstFear(CombatantEntry target, int dc) {
+        var flags = saveFlags(target, Ability.WISDOM, false, true, true);
+        return finishSave(target, Ability.WISDOM, dc, 0, flags.automaticFailure(), flags.automaticFailure() ? 0 : d20(target, flags.mode()));
+    }
+
+    void campaignSpellSave(CombatantEntry target, Ability ability, int dc, int bonus, boolean disadvantage, boolean serenity,
+            long time, java.util.function.BiConsumer<Boolean, Long> after) {
+        var flags = saveFlags(target, ability, disadvantage, true, serenity);
+        if (!encounter.active() || flags.automaticFailure()) {
+            after.accept(finishSave(target, ability, dc, bonus, flags.automaticFailure(),
+                    flags.automaticFailure() ? 0 : d20(target, flags.mode())), time);
+            return;
+        }
+        var roll = rolledD20(target, flags.mode());
+        campaign.editRoll(target, roll.kept(), roll.dice().get(0), roll.mode(), time, (edited, moment) ->
+                after.accept(finishSave(target, ability, dc, bonus, false, edited.natural() + edited.adjustment()), moment));
+    }
+
+    private net.dnd5ecraft.rules.conditions.ConditionEffectApplier.RollEffect saveFlags(CombatantEntry target, Ability ability,
+            boolean disadvantage, boolean magic, boolean serenity) {
         var state = target.bestiary().orElse(null);
         boolean advantages = magic && (state != null && state.has(Feature.MAGIC_RESISTANCE)
                 || target.race == RaceType.GNOME && Set.of(Ability.INTELLIGENCE, Ability.WISDOM, Ability.CHARISMA).contains(ability))
                 || ability == Ability.DEXTERITY && (target.has(Effect.HASTE) || target.dodging && target.canAct() && target.speedFeet() > 0)
-                || ability == Ability.STRENGTH && target.has(Effect.RAGING);
-        var updated = target.conditionEffects().savingThrow(ability, advantages, disadvantage);
-        boolean succeeds = !updated.automaticFailure()
-                && abilityOutcome(target, d20(target, updated.mode()) + target.stats().saveModifier(ability) + bonus + luck(target) + auraOfProtection(target), dc);
+                || ability == Ability.STRENGTH && target.has(Effect.RAGING)
+                || target.race == RaceType.LOXODON && serenity;
+        return target.conditionEffects().savingThrow(ability, advantages, disadvantage);
+    }
+
+    private boolean finishSave(CombatantEntry target, Ability ability, int dc, int bonus, boolean automaticFailure, int roll) {
+        var state = target.bestiary().orElse(null);
+        boolean succeeds = !automaticFailure
+                && abilityOutcome(target, roll + target.stats().saveModifier(ability) + bonus + luck(target) + auraOfProtection(target), dc);
         if (!succeeds && state != null && world.useLegendaryResistance(target) && state.useLegendaryResistance()) {
             event(EventType.BESTIARY, target, target, "legendary_resistance", state.snapshot().legendaryResistances());
             return true;

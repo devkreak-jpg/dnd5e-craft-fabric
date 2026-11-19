@@ -33,7 +33,11 @@ public final class TabletopRolls {
         public boolean requestable() { return kind == Kind.ABILITY || kind == Kind.SKILL || kind == Kind.SAVE; }
     }
 
-    public record Options(RollMode mode, boolean whisper, boolean inspiration) {}
+    public record Options(RollMode mode, boolean whisper, boolean inspiration, boolean smell) {
+        public Options(RollMode mode, boolean whisper, boolean inspiration) {
+            this(mode, whisper, inspiration, false);
+        }
+    }
     public record DicePool(int count, int sides) {}
     public record Outcome(List<Integer> dice, int kept, int modifier, int total, int sides, RollMode mode, boolean critical) {
         public Outcome { dice = List.copyOf(dice); }

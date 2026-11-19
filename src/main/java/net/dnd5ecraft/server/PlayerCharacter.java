@@ -8,5 +8,12 @@ public interface PlayerCharacter {
     Optional<CharacterSheetData> dnd5e$sheet();
     void dnd5e$setSheet(CharacterSheetData sheet);
     float dnd5e$physicalScale();
+    net.dnd5ecraft.rules.character.RaceType dnd5e$race();
+    boolean dnd5e$showsCosmetics();
+    int dnd5e$campaignFlags();
+    void dnd5e$campaignFlags(int flags);
+    int dnd5e$disguise();
+    void dnd5e$disguise(int appearance);
+    void dnd5e$setCosmetics(boolean enabled);
     boolean dnd5e$isScaleKey(EntityDataAccessor<?> key);
 }

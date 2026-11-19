@@ -15,13 +15,14 @@ import net.dnd5ecraft.rules.ability.Skill;
 import net.dnd5ecraft.rules.ability.TabletopRolls.Check;
 import net.dnd5ecraft.rules.ability.TabletopRolls.Kind;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
 import static net.dnd5ecraft.client.gui.theme.DndUiTheme.*;
 
 final class DmRollRequestScreen extends DndScreen {
     private static final Kind[] KINDS = {Kind.ABILITY, Kind.SKILL, Kind.SAVE};
-    private final DmMasterConsoleScreen parent;
+    private final Screen parent;
     private List<PartyMember> party = List.of();
     private UUID target;
     private Kind kind = Kind.SKILL;
@@ -31,7 +32,7 @@ final class DmRollRequestScreen extends DndScreen {
     private String dc = "14";
     private boolean secret;
 
-    DmRollRequestScreen(DmMasterConsoleScreen parent) {
+    DmRollRequestScreen(Screen parent) {
         super(text("tabletop.dm_title"));
         this.parent = parent;
     }

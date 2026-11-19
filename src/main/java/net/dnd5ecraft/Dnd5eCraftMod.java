@@ -21,6 +21,10 @@ public final class Dnd5eCraftMod implements ModInitializer {
         ModEntities.register();
         ModItems.register();
         PlayerSheets.register();
+        net.dnd5ecraft.server.CampaignPhysics.register();
+        net.dnd5ecraft.server.CampaignMagic.register();
+        net.dnd5ecraft.server.CampaignPoses.register();
+        net.dnd5ecraft.server.DmDirector.register();
         DiceDisplaySpawner.register();
         DialogueSessions.register();
         DmMode.register();

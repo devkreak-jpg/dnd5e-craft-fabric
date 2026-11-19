@@ -550,6 +550,98 @@ class CombatManagerTest {
         assertEquals(84, distant.hitPoints().current());
     }
 
+    @Test
+    void harlequinOpensAnAttackWindowBeforeDamageAndAppliesChaosSign() {
+        var attacker = creature(1, 0, 20, cell(0, 0), 100, 12, Set.of(), 0);
+        var enemy = creature(2, 1, 15, cell(1, 0), 100, 16, Set.of(), 0);
+        var harlequin = net.dnd5ecraft.rules.campaign.CampaignHero.HARLEQUIN.create();
+        var listener = CombatantEntry.fromSheet(new UUID(0, 3), 0, 9, cell(3, 0), harlequin,
+                13, false, Map.of(), Set.of(), Set.of(), List.of(SWORD), Defenses.NONE);
+        var combat = encounter(FIXED_DICE, attacker, enemy, listener);
+        combat.start();
+        assertEquals(1, listener.remaining(net.dnd5ecraft.rules.character.ClassFeature.CHAOS_POINTS));
+        var window = combat.attack(attacker.id(), enemy.id(), 0, 100).orElseThrow();
+        assertTrue(window.offers().contains(new Offer(listener.id(), Kind.IMPROMPTU_ADD)));
+        assertEquals(100, enemy.hitPoints().current());
+        combat.answerReaction(window.id(), listener.id(), Optional.of(new Reaction(Kind.IMPROMPTU_ADD)), 120);
+        assertEquals(90, enemy.hitPoints().current());
+        assertEquals(0, listener.remaining(net.dnd5ecraft.rules.character.ClassFeature.CHAOS_POINTS));
+        assertEquals(10, listener.chaosShift);
+    }
+
+    @Test
+    void absorbElementsHalvesIncomingFireAndChargesTheNextMeleeHit() {
+        var attacker = caster(1, 0, 20, cell(0, 0), Set.of("fire_bolt"));
+        var defender = caster(2, 1, 10, cell(1, 0), Set.of("absorb_elements"));
+        var combat = encounter(FIXED_DICE, attacker, defender);
+        combat.start();
+        var window = combat.cast(attacker.id(), new CastRequest("fire_bolt", 0, List.of(defender.id())), 0).orElseThrow();
+        assertEquals(List.of(new Offer(defender.id(), Kind.ABSORB_ELEMENTS)), window.offers());
+        combat.answerReaction(window.id(), defender.id(), Optional.of(new Reaction(Kind.ABSORB_ELEMENTS, 1, Pool.REGULAR)), 5);
+        assertEquals(90, defender.hitPoints().current());
+        combat.endTurn(attacker.id(), 10);
+        combat.attack(defender.id(), attacker.id(), 0, 11);
+        assertEquals(84, attacker.hitPoints().current());
+        assertFalse(defender.has(CombatantEntry.Effect.ABSORBED));
+    }
+
+    @Test
+    void opportunityAttackCanOriginateFromTheEcho() {
+        var owner = creature(1, 1, 10, cell(4, 0), 100, 12, Set.of(), 0);
+        var intruder = creature(2, 0, 20, cell(1, 0), 100, 12, Set.of(), 0);
+        var world = new CombatManager.Battlefield() {
+            @Override public boolean canOccupy(Cell cell) { return cell.y() == 0; }
+            @Override public boolean difficult(Cell cell) { return false; }
+            @Override public boolean blocksCover(Cell cell) { return false; }
+            @Override public Light lightAt(Cell cell) { return Light.BRIGHT; }
+            @Override public Cell echoCell(CombatantEntry actor) { return actor == owner ? cell(0, 0) : null; }
+        };
+        var combat = new CombatManager(new CombatEncounterState(List.of(intruder, owner)), world, FIXED_DICE);
+        combat.start();
+        var destination = cell(2, 0);
+        assertEquals(List.of(owner.id()), combat.opportunityThreats(intruder.id(), destination));
+        var reaction = combat.move(intruder.id(), destination, 0).orElseThrow();
+        combat.answerReaction(reaction.id(), owner.id(), Optional.of(new Reaction(Kind.OPPORTUNITY_ATTACK)), 1);
+        assertEquals(90, intruder.hitPoints().current());
+        assertEquals(destination, intruder.cell());
+        assertEquals(cell(4, 0), owner.cell());
+    }
+
+    @Test
+    void sceneChangeChargesOnePointAndAllowsOneDirectorPairOnTheSameTurn() {
+        var sheet = net.dnd5ecraft.rules.campaign.CampaignHero.HARLEQUIN.create();
+        var jester = CombatantEntry.fromSheet(new UUID(0, 3), 0, 20, cell(0, 0), sheet,
+                13, false, Map.of(), Set.of(), Set.of(), List.of(SWORD), Defenses.NONE);
+        var first = creature(1, 0, 10, cell(1, 0), 100, 12, Set.of(), 0);
+        var second = creature(2, 1, 9, cell(2, 0), 100, 12, Set.of(), 0);
+        var combat = encounter(FIXED_DICE, jester, first, second);
+        combat.start();
+        assertThrows(IllegalStateException.class, () -> combat.directorScenePair(first.id(), second.cell(), 0));
+        var action = net.dnd5ecraft.server.CampaignActions.Action.SCENE_CHANGE;
+        combat.campaignManeuver(jester.id(), action, first.id(), second.cell(), 1, 0);
+        assertEquals(cell(2, 0), first.cell());
+        assertEquals(cell(1, 0), second.cell());
+        assertEquals(0, jester.remaining(net.dnd5ecraft.rules.character.ClassFeature.CHAOS_POINTS));
+        assertEquals(jester.id(), combat.directorScenePair(first.id(), second.cell(), 2));
+        assertEquals(cell(1, 0), first.cell());
+        assertThrows(IllegalStateException.class, () -> combat.directorScenePair(first.id(), second.cell(), 3));
+    }
+
+    @Test
+    void tritonFogSpendsTheRacialChargeWithoutSpendingASlot() {
+        var sheet = net.dnd5ecraft.rules.campaign.CampaignHero.FINNEAS.create();
+        var finneas = CombatantEntry.fromSheet(new UUID(0, 1), 0, 20, cell(0, 0), sheet, 18, true,
+                Map.of("fog_cloud", Ability.INTELLIGENCE), Set.of(), Set.of(), List.of(SWORD), Defenses.NONE);
+        var enemy = creature(2, 1, 10, cell(3, 0), 100, 12, Set.of(), 0);
+        var combat = encounter(FIXED_DICE, finneas, enemy);
+        combat.start();
+        combat.castTritonFog(finneas.id(), cell(2, 0), 0);
+        assertEquals("fog_cloud", combat.concentration(finneas.id()).orElseThrow().spellId());
+        assertEquals(0, finneas.remaining(net.dnd5ecraft.rules.character.ClassFeature.TRITON_FOG));
+        assertEquals(4, finneas.slotsAvailable(Pool.REGULAR, 1));
+        assertFalse(combat.canSee(finneas, enemy));
+    }
+
     private static CombatantEntry caster(int id, int team, int initiative, Cell cell, Set<String> spells) {
         return entry(id, team, initiative, cell, 100, 12, 9, Map.of(ClassType.WIZARD, 9),
                 spells, Set.of(Trait.HUMANOID), 0);

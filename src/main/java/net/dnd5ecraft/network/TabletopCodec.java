@@ -29,12 +29,13 @@ public final class TabletopCodec {
     }
 
     public static Options options(FriendlyByteBuf buf) {
-        return new Options(readEnum(buf, RollMode.class), buf.readBoolean(), buf.readBoolean());
+        return new Options(readEnum(buf, RollMode.class), buf.readBoolean(), buf.readBoolean(), buf.readBoolean());
     }
     public static void options(FriendlyByteBuf buf, Options target) {
         writeEnum(buf, target.mode());
         buf.writeBoolean(target.whisper());
         buf.writeBoolean(target.inspiration());
+        buf.writeBoolean(target.smell());
     }
 
     public static Card card(FriendlyByteBuf buf) {

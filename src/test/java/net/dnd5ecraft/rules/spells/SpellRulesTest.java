@@ -104,7 +104,7 @@ class SpellRulesTest {
 
     @Test
     void registryHasStableIdsSlotsSchoolsAndScaling() {
-        assertEquals(47, SpellRegistry5e.all().size());
+        assertEquals(56, SpellRegistry5e.all().size());
         Spell fireball = SpellRegistry5e.require("fireball");
         assertEquals(SpellSchool.EVOCATION, fireball.school());
         assertTrue(fireball.canUseSlot(3));

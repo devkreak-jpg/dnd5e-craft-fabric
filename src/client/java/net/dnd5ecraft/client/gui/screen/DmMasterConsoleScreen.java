@@ -87,6 +87,10 @@ public final class DmMasterConsoleScreen extends DndScreen {
         button(text("dm.party"), third, top + 138, col, () -> {
             if (ClientPacketHandlers.send(Action.PARTY)) { showParty = true; partyPage = 0; rebuild(); }
         }).active = op;
+        button(text("campaign.director"), x, top + 160, col, () -> {
+            ClientPacketHandlers.send(Action.PARTY);
+            minecraft.setScreen(new DmDirectorScreen(this));
+        }).active = op;
         button(text("close"), x, bottom() - 25, col, this::onClose);
         cycle("area", shape, AoEGeometry.values(), second, bottom() - 25, col, value -> { shape = value; rebuild(); });
         button(text("dm.preview"), third, bottom() - 25, col, () -> {

@@ -10,7 +10,9 @@ import java.util.UUID;
 public final class ReactionWindowManager {
     public static final int WINDOW_MILLIS = 3_500;
 
-    public enum Kind { OPPORTUNITY_ATTACK, SHIELD, COUNTERSPELL, UNCANNY_DODGE, CUTTING_WORDS, DEFLECT_MISSILES, READIED_ATTACK }
+    public enum Kind { OPPORTUNITY_ATTACK, SHIELD, COUNTERSPELL, UNCANNY_DODGE, CUTTING_WORDS, DEFLECT_MISSILES, READIED_ATTACK,
+        IMPROMPTU_ADD, IMPROMPTU_SUBTRACT, PROMPTERS_EDIT, FINAL_ACT_20, FINAL_ACT_1, IMPROVISATION, ABSORB_ELEMENTS
+    }
     public record Offer(UUID reactor, Kind kind) {
         public Offer { Objects.requireNonNull(reactor); Objects.requireNonNull(kind); }
     }

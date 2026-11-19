@@ -14,7 +14,7 @@ public final class TabletopActions {
 
     public static Options options(boolean modifiers) {
         var mode = TabletopRolls.clickMode(ClientDndState.rollMode(), modifiers && Screen.hasShiftDown(), modifiers && Screen.hasAltDown());
-        return new Options(mode, ClientDndState.whisper(), ClientDndState.inspiration());
+        return new Options(mode, ClientDndState.whisper(), ClientDndState.inspiration(), ClientDndState.smell());
     }
 
     public static void roll(Check check, boolean power) {
@@ -33,7 +33,7 @@ public final class TabletopActions {
             case DICE -> check.id().equals("1d20");
             default -> true;
         };
-        var roll = new Options(selected.mode(), selected.whisper(), eligible && selected.inspiration());
+        var roll = new Options(selected.mode(), selected.whisper(), eligible && selected.inspiration(), selected.smell());
         if (ClientPacketHandlers.send(Action.TABLETOP_ROLL, packet -> {
             TabletopCodec.check(packet, check);
             TabletopCodec.options(packet, roll);

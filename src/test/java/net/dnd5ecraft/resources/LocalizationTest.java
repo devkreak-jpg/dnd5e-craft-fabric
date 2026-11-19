@@ -77,6 +77,18 @@ final class LocalizationTest {
         require(keys, "attitude", NpcAttitude.values());
         require(keys, "zone.mode", TriggerZoneSpec.Mode.values());
         require(keys, "method", Protocol.AbilityMethod.values());
+        require(keys, "campaign.action", net.dnd5ecraft.server.CampaignActions.Action.values());
+        require(keys, "director.tool", net.dnd5ecraft.server.DmDirector.Tool.values());
+        require(keys, "cannon", net.dnd5ecraft.entity.EldritchCannonEntity.Mode.values());
+        for (var weapon : net.dnd5ecraft.rules.equipment.WeaponStatsRegistry.Weapon.values()) {
+            assertTrue(keys.contains("item.dnd-5e-craft." + weapon.name().toLowerCase(Locale.ROOT)), weapon.name());
+        }
+        for (var property : net.dnd5ecraft.rules.equipment.WeaponProperty.values()) {
+            assertTrue(keys.contains("dnd-5e-craft.weapon.property." + property.name().toLowerCase(Locale.ROOT)), property.name());
+        }
+        for (var theme : net.dnd5ecraft.entity.CrowdTheme.values()) {
+            assertTrue(keys.contains("dnd-5e-craft.crowd." + theme.id()), theme.name());
+        }
 
         SpellRegistry5e.all().keySet().forEach(id -> assertTrue(keys.contains(UI + "spell." + id), id));
         for (BestiaryPreset preset : BestiaryPreset.values()) {

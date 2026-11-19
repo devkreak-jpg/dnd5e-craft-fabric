@@ -30,7 +30,8 @@ public final class ReactionPromptScreen extends DndScreen {
         int x = left + 12;
         for (int i = 0; i < reaction.choices().size(); i++) {
             var kind = reaction.choices().get(i);
-            button(name("reaction", kind), x, top + 32 + 22 * i, innerWidth(), () -> ClientActions.react(kind, hasShiftDown()));
+            int col = (innerWidth() - 5) / 2;
+            button(name("reaction", kind), x + i % 2 * (col + 5), top + 30 + 20 * (i / 2), col, () -> ClientActions.react(kind, hasShiftDown()));
         }
         button(text("hud.decline"), x, bottom() - 25, 100, this::onClose);
     }

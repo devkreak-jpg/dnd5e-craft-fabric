@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import net.dnd5ecraft.client.ClientActions;
+import net.dnd5ecraft.client.ClientCampaign;
 import net.dnd5ecraft.client.ClientDndState;
 import net.dnd5ecraft.client.ClientPacketHandlers;
 import net.dnd5ecraft.network.PacketPolicy.Action;
@@ -81,8 +82,14 @@ public final class SpellbookScreen extends DndScreen {
             if (!choices().isEmpty()) {
                 button(text("spellbook.choice", choiceLabel()), right, bottom() - 62, details, () -> { choice++; rebuild(); });
             }
-            if (combat != null && selected.castingTime() != Spell.CastingTime.REACTION && selected.castingTime() != Spell.CastingTime.TEN_MINUTES) {
+            if (campaignCast() || combat != null && selected.castingTime() != Spell.CastingTime.REACTION && selected.castingTime() != Spell.CastingTime.TEN_MINUTES) {
                 cast = button(text("spellbook.cast"), right, bottom() - 25, details, this::aim);
+            }
+            if (selected.id().equals("mending")) {
+                button(text("campaign.mending_self"), right, bottom() - 49, details, () -> {
+                    ClientCampaign.spell("mending", null, null, "");
+                    minecraft.setScreen(null);
+                }).active = combat == null || combat.ownsTurn();
             }
             if (selected.ritual()) {
                 ritual = pill(text("spellbook.ritual"), right, bottom() - (cast == null ? 25 : 43), details, 17, false,
@@ -104,8 +111,11 @@ public final class SpellbookScreen extends DndScreen {
     private void updateActions() {
         if (cast != null) {
             var combat = ClientDndState.controlsCombatant() ? ClientDndState.combat() : null;
-            cast.active = combat != null && combat.ownsTurn()
-                    && (selected.level() == 0 || combat.slots().available(slot, pool == Pool.PACT) > 0);
+            var sheet = ClientDndState.sheet();
+            boolean racialFog = selected.id().equals("fog_cloud") && sheet != null
+                    && sheet.remaining(net.dnd5ecraft.rules.character.ClassFeature.TRITON_FOG) > 0;
+            cast.active = campaignCast() && combat == null || combat != null && combat.ownsTurn()
+                    && (racialFog || selected.level() == 0 || combat.slots().available(slot, pool == Pool.PACT) > 0);
         }
         if (ritual != null) {
             var sheet = ClientDndState.sheet();
@@ -196,7 +206,26 @@ public final class SpellbookScreen extends DndScreen {
         return name(value instanceof DamageType5e ? "damage" : "condition", value);
     }
 
+    private boolean campaignCast() {
+        return selected.effect().kind() == Spell.EffectKind.UTILITY || selected.id().equals("fog_cloud");
+    }
+
     private void aim() {
+        var id = selected.id();
+        var sheet = ClientDndState.sheet();
+        if (selected.effect().kind() == Spell.EffectKind.UTILITY || id.equals("fog_cloud")
+                && (!inCombat || sheet != null && sheet.remaining(net.dnd5ecraft.rules.character.ClassFeature.TRITON_FOG) > 0)) {
+            switch (id) {
+                case "message" -> minecraft.setScreen(new CampaignMessageScreen(this));
+                case "mending" -> ClientCampaign.creature(2.5, target -> ClientCampaign.spell(id, target, null, ""));
+                case "fog_cloud" -> ClientCampaign.point(point -> ClientCampaign.spell(id, null, point, ""));
+                default -> {
+                    ClientCampaign.spell(id, null, null, "");
+                    minecraft.setScreen(null);
+                }
+            }
+            return;
+        }
         var options = choices();
         ClientActions.startSpell(selected, slot, pool, options.isEmpty() ? null : options.get(Math.floorMod(choice, options.size())).name());
         minecraft.setScreen(null);

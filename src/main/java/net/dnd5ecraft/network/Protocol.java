@@ -19,14 +19,14 @@ import net.dnd5ecraft.rules.spells.AoEGeometry.Vec3;
 
 public final class Protocol {
     static final UUID NO_ACTOR = new UUID(0, 0);
-    public static final int VERSION = 2;
+    public static final int VERSION = 3;
     public static final int MAX_REQUEST = 16_000;
     public static final int MAX_COMBATANTS = 64;
     public static final int MAX_CELLS = 4096;
     public static final int MAX_SPELL_TARGETS = 16;
     public static final int MAX_UPDATE = 180_000;
 
-    public enum Update { STATE, SHEET, ROLL, PING, DIALOGUE, DIALOGUE_END, NPC, ZONE, DRAFT_ROLL, NOTICE, DAMAGE, PARTY, CINEMATIC_BANNER, PASSIVE_DETECTION_GLINT, TABLETOP_READY, TABLETOP_RESULT, ROLL_PROMPT, PROMPT_END, DIALOGUE_ROLL, CONCENTRATION, SHORT_REST }
+    public enum Update { STATE, SHEET, ROLL, PING, DIALOGUE, DIALOGUE_END, NPC, ZONE, DRAFT_ROLL, NOTICE, DAMAGE, PARTY, CINEMATIC_BANNER, PASSIVE_DETECTION_GLINT, TABLETOP_READY, TABLETOP_RESULT, ROLL_PROMPT, PROMPT_END, DIALOGUE_ROLL, CONCENTRATION, SHORT_REST, DIRECTOR_SELECTION }
     public enum AbilityMethod { POINT_BUY, STANDARD_ARRAY, ROLLED }
 
     public record Creature(UUID id, String name, int team, int initiative, Cell cell, int hp, int maxHp,

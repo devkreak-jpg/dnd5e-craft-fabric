@@ -7,6 +7,11 @@ import net.dnd5ecraft.client.ClientDndState;
 import net.dnd5ecraft.client.ClientPacketHandlers;
 import net.dnd5ecraft.client.TabletopActions;
 import net.dnd5ecraft.client.gui.screen.SpellbookScreen;
+import net.dnd5ecraft.client.gui.screen.ActionWheelScreen;
+import net.dnd5ecraft.client.gui.screen.CampaignActionsScreen;
+import net.dnd5ecraft.client.gui.screen.ReactionPromptScreen;
+import net.dnd5ecraft.rules.ability.TabletopRolls.Check;
+import net.dnd5ecraft.rules.conditions.DeathSaveTracker.State;
 import net.dnd5ecraft.combat.ReactionWindowManager.Kind;
 import net.dnd5ecraft.network.PacketPolicy.Action;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -19,7 +24,8 @@ import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 public final class ModKeybinds {
-    private static KeyMapping sheet, spellbook, roll, end, dm, console, ping, dash, disengage, stand, interact, decline, cancel, attackProfile;
+    private static KeyMapping sheet, spellbook, roll, end, dm, console, ping, dash, disengage, stand, interact, decline, cancel, attackProfile, wheel, hotkeys, fireCannon;
+    private static boolean showHotkeys = true;
     private static final EnumMap<Kind, KeyMapping> REACTIONS = new EnumMap<>(Kind.class);
     private static CameraType previousCamera;
 
@@ -32,7 +38,10 @@ public final class ModKeybinds {
         end = key("end", GLFW.GLFW_KEY_SPACE);
         dm = key("dm", GLFW.GLFW_KEY_M);
         console = key("console", GLFW.GLFW_KEY_N);
-        ping = key("ping", GLFW.GLFW_KEY_V);
+        ping = key("ping", GLFW.GLFW_KEY_O);
+        wheel = key("action_wheel", GLFW.GLFW_KEY_V);
+        hotkeys = key("hotkeys", GLFW.GLFW_KEY_F12);
+        fireCannon = key("fire_cannon", GLFW.GLFW_KEY_P);
         dash = key("dash", GLFW.GLFW_KEY_G);
         disengage = key("disengage", GLFW.GLFW_KEY_X);
         stand = key("stand", GLFW.GLFW_KEY_B);
@@ -45,6 +54,8 @@ public final class ModKeybinds {
                 case CUTTING_WORDS -> GLFW.GLFW_KEY_J;
                 case DEFLECT_MISSILES -> GLFW.GLFW_KEY_Y;
                 case READIED_ATTACK -> GLFW.GLFW_KEY_U;
+                case IMPROMPTU_ADD, IMPROMPTU_SUBTRACT, PROMPTERS_EDIT, FINAL_ACT_20, FINAL_ACT_1, IMPROVISATION,
+                        ABSORB_ELEMENTS -> InputConstants.UNKNOWN.getValue();
                 default -> GLFW.GLFW_KEY_F6 + kind.ordinal();
             };
             REACTIONS.put(kind, key(kind.name().toLowerCase(java.util.Locale.ROOT), keyCode));
@@ -71,16 +82,37 @@ public final class ModKeybinds {
                 var combat = ClientDndState.combat();
                 if (combat != null && combat.reaction() != null && !combat.reaction().choices().isEmpty()
                         && ClientDndState.reactionRemaining() > 0) {
-                    ClientActions.react(combat.reaction().choices().get(0), Screen.hasShiftDown());
-                } else if (client.screen == null && !TabletopActions.answerPrompt()) ClientPacketHandlers.send(Action.ROLL);
+                    if (client.screen == null) client.setScreen(new ReactionPromptScreen(null, combat.id(), combat.reaction()));
+                } else if (client.screen == null && !TabletopActions.answerPrompt()) {
+                    var character = ClientDndState.sheet();
+                    if (character != null && character.deathSaves().state() == State.DYING) {
+                        TabletopActions.roll(new Check(net.dnd5ecraft.rules.ability.TabletopRolls.Kind.DEATH_SAVE, ""), false);
+                    } else ClientPacketHandlers.send(Action.ROLL);
+                }
             }
             if (client.screen != null) return;
+            if (wheel.consumeClick() && wheel.isDown()) client.setScreen(new ActionWheelScreen());
+            if (hotkeys.consumeClick()) showHotkeys = !showHotkeys;
+            if (fireCannon.consumeClick()) {
+                if (Screen.hasShiftDown() && net.dnd5ecraft.client.ClientCampaign.companion(
+                        net.dnd5ecraft.entity.EldritchCannonEntity.class) != null) {
+                    client.setScreen(new net.dnd5ecraft.client.gui.screen.CannonHudScreen());
+                } else CampaignActionsScreen.fireCannon();
+            }
             if (sheet.consumeClick()) ClientPacketHandlers.openSheet();
             if (spellbook.consumeClick()) { ClientActions.cancelAim(); client.setScreen(new SpellbookScreen()); }
             if (dm.consumeClick()) ClientPacketHandlers.send(Action.DM_MODE);
-            if (console.consumeClick()) ClientActions.console();
+            if (console.consumeClick()) {
+                if (Screen.hasShiftDown() && ClientDndState.state().operator()) {
+                    ClientPacketHandlers.send(Action.PARTY);
+                    client.setScreen(new net.dnd5ecraft.client.gui.screen.DmDirectorScreen(null));
+                } else ClientActions.console();
+            }
             if (ping.consumeClick()) ClientActions.ping();
-            if (cancel.consumeClick()) ClientActions.cancelAim();
+            if (cancel.consumeClick()) {
+                ClientActions.cancelAim();
+                net.dnd5ecraft.client.ClientCampaign.cancelPick();
+            }
             if (attackProfile.consumeClick()) ClientActions.cycleAttack();
             if (end.consumeClick() && tactical) ClientPacketHandlers.send(Action.END_TURN);
             if (dash.consumeClick() && tactical) ClientPacketHandlers.send(Action.DASH);
@@ -126,6 +158,14 @@ public final class ModKeybinds {
     }
 
     public static Component reactionKey(Kind kind) { return (kind == null ? decline : REACTIONS.get(kind)).getTranslatedKeyMessage(); }
+
+    public static boolean matchesWheel(int key, int scancode) { return wheel.matches(key, scancode); }
+    public static boolean showHotkeys() { return showHotkeys; }
+    public static Component sheetKey() { return sheet.getTranslatedKeyMessage(); }
+    public static Component spellbookKey() { return spellbook.getTranslatedKeyMessage(); }
+    public static Component wheelKey() { return wheel.getTranslatedKeyMessage(); }
+    public static Component hotkeysKey() { return hotkeys.getTranslatedKeyMessage(); }
+    public static Component fireCannonKey() { return fireCannon.getTranslatedKeyMessage(); }
 
     public static Component endKey() { return end.getTranslatedKeyMessage(); }
     public static Component dashKey() { return dash.getTranslatedKeyMessage(); }

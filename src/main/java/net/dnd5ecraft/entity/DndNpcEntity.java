@@ -61,6 +61,67 @@ public final class DndNpcEntity extends PathfinderMob {
     private Boolean previousAi;
     private DeathSaveTracker death = DeathSaveTracker.CONSCIOUS;
 
+    private NpcBehaviorMode behavior = NpcBehaviorMode.WANDER;
+    private net.minecraft.core.BlockPos home;
+    private net.minecraft.world.phys.Vec3 stationaryPosition;
+    private int wanderRadius = 8;
+    private int patrolIndex;
+    private final java.util.List<net.minecraft.core.BlockPos> patrol = new java.util.ArrayList<>();
+    private long nextWalk;
+
+    public NpcBehaviorMode behavior() { return behavior; }
+    public int wanderRadius() { return wanderRadius; }
+    public java.util.List<net.minecraft.core.BlockPos> patrol() { return java.util.List.copyOf(patrol); }
+
+    public void setBehavior(NpcBehaviorMode next, int radius) {
+        if (level().isClientSide || radius < 4 || radius > 16) throw new IllegalArgumentException("Invalid NPC behavior");
+        behavior = java.util.Objects.requireNonNull(next);
+        wanderRadius = radius;
+        home = blockPosition();
+        stationaryPosition = position();
+        patrolIndex = 0;
+        nextWalk = 0;
+        getNavigation().stop();
+        if (next == NpcBehaviorMode.STATIONARY || next == NpcBehaviorMode.DM_COMMANDED) setTarget(null);
+    }
+
+    public void addWaypoint(net.minecraft.core.BlockPos position) {
+        if (level().isClientSide || patrol.size() >= 32 || position.distSqr(blockPosition()) > 4096
+                || !level().isLoaded(position)) throw new IllegalArgumentException("Invalid patrol waypoint");
+        patrol.add(position.immutable());
+    }
+
+    @Override public void aiStep() {
+        super.aiStep();
+        if (level().isClientSide || isNoAi() || TacticalCombat.isLocked(this) || possessingDmUuid().isPresent()) return;
+        if (home == null) home = blockPosition();
+        if (behavior == NpcBehaviorMode.DM_COMMANDED || level().getGameTime() < nextWalk) return;
+        if (behavior == NpcBehaviorMode.STATIONARY) {
+            getNavigation().stop();
+            if (stationaryPosition == null) stationaryPosition = position();
+            var anchor = stationaryPosition;
+            if (distanceToSqr(anchor) > .04 && level().noCollision(this, getBoundingBox().move(anchor.subtract(position())))) {
+                setPos(anchor);
+            }
+            return;
+        }
+        if (getTarget() != null || !getNavigation().isDone()) return;
+        nextWalk = level().getGameTime() + 20 + getRandom().nextInt(55);
+        if (behavior == NpcBehaviorMode.PATROL) {
+            if (!patrol.isEmpty()) {
+                var next = patrol.get(patrolIndex++ % patrol.size());
+                if (level().isLoaded(next)) getNavigation().moveTo(next.getX() + .5, next.getY(), next.getZ() + .5, .85);
+                if (patrolIndex >= patrol.size()) patrolIndex = 0;
+            }
+            return;
+        }
+        int dx = getRandom().nextInt(-wanderRadius, wanderRadius + 1);
+        int dz = getRandom().nextInt(-wanderRadius, wanderRadius + 1);
+        if (dx * dx + dz * dz > wanderRadius * wanderRadius) return;
+        var next = home.offset(dx, 0, dz);
+        if (level().isLoaded(next)) getNavigation().moveTo(next.getX() + .5, next.getY(), next.getZ() + .5, .7);
+    }
+
     public DndNpcEntity(EntityType<? extends DndNpcEntity> type, Level level) {
         super(type, level);
         setPersistenceRequired();
@@ -88,11 +149,11 @@ public final class DndNpcEntity extends PathfinderMob {
     protected void registerGoals() {
         goalSelector.addGoal(0, new FloatGoal(this));
         goalSelector.addGoal(2, new MeleeAttackGoal(this, 1.0, true));
-        goalSelector.addGoal(5, new WaterAvoidingRandomStrollGoal(this, .7));
         goalSelector.addGoal(6, new LookAtPlayerGoal(this, Player.class, 8));
         goalSelector.addGoal(7, new RandomLookAroundGoal(this));
         targetSelector.addGoal(1, new NearestAttackableTargetGoal<>(this, Player.class, 10, true, false,
-                player -> !preset().civilian() && !player.isSpectator() && attitudeFor(player.getUUID()) == NpcAttitude.HOSTILE));
+                player -> !preset().civilian() && !player.isSpectator() && behavior != NpcBehaviorMode.DM_COMMANDED
+                        && behavior != NpcBehaviorMode.STATIONARY && attitudeFor(player.getUUID()) == NpcAttitude.HOSTILE));
     }
 
     @Override
@@ -217,6 +278,7 @@ public final class DndNpcEntity extends PathfinderMob {
 
     @Override
     protected InteractionResult mobInteract(Player player, InteractionHand hand) {
+        if (player.getItemInHand(hand).is(net.dnd5ecraft.item.ModItems.DM_MASTER_WAND)) return InteractionResult.PASS;
         if (hand != InteractionHand.MAIN_HAND || player.isShiftKeyDown()) return super.mobInteract(player, hand);
         if (player instanceof ServerPlayer serverPlayer && !TacticalCombat.isLocked(this)) {
             if (DialogueSessions.open(serverPlayer, this)) return InteractionResult.CONSUME;
@@ -228,6 +290,15 @@ public final class DndNpcEntity extends PathfinderMob {
     @Override
     public void addAdditionalSaveData(CompoundTag tag) {
         super.addAdditionalSaveData(tag);
+        tag.putString("DndBehavior", behavior.name());
+        tag.putInt("DndWanderRadius", wanderRadius);
+        if (home != null) tag.putLong("DndHome", home.asLong());
+        if (stationaryPosition != null) {
+            tag.putDouble("DndAnchorX", stationaryPosition.x);
+            tag.putDouble("DndAnchorY", stationaryPosition.y);
+            tag.putDouble("DndAnchorZ", stationaryPosition.z);
+        }
+        tag.putLongArray("DndPatrol", patrol.stream().mapToLong(net.minecraft.core.BlockPos::asLong).toArray());
         if (previousAi != null) tag.putBoolean("NoAI", previousAi || death.state() != DeathSaveTracker.State.CONSCIOUS);
         tag.putString("DndPreset", preset().id());
         if (entityData.get(SCALE) != 0) tag.putFloat("DndScale", entityData.get(SCALE));
@@ -256,6 +327,16 @@ public final class DndNpcEntity extends PathfinderMob {
     @Override
     public void readAdditionalSaveData(CompoundTag tag) {
         super.readAdditionalSaveData(tag);
+        behavior = NpcBehaviorMode.saved(tag.getString("DndBehavior"));
+        wanderRadius = tag.contains("DndWanderRadius") ? Math.max(4, Math.min(16, tag.getInt("DndWanderRadius"))) : 8;
+        home = tag.contains("DndHome") ? net.minecraft.core.BlockPos.of(tag.getLong("DndHome")) : null;
+        if (tag.contains("DndAnchorX")) {
+            stationaryPosition = new net.minecraft.world.phys.Vec3(tag.getDouble("DndAnchorX"),
+                    tag.getDouble("DndAnchorY"), tag.getDouble("DndAnchorZ"));
+        }
+        patrol.clear();
+        java.util.Arrays.stream(tag.getLongArray("DndPatrol")).limit(32)
+                .mapToObj(net.minecraft.core.BlockPos::of).forEach(patrol::add);
         BestiaryPreset preset = BestiaryPreset.GOBLIN;
         try {
             if (tag.contains("DndPreset", Tag.TAG_STRING)) preset = BestiaryPreset.fromId(tag.getString("DndPreset"));

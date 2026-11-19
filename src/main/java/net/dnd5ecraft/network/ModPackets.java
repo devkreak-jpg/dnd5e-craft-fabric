@@ -150,6 +150,14 @@ public final class ModPackets {
         });
     }
 
+    private static void checkCampaignTurn(ServerPlayer player, PacketPolicy.TurnToken token) {
+        if (TacticalCombat.isLocked(player)) {
+            var current = TacticalCombat.turnToken(player);
+            if (current == null || !current.equals(token)) throw new IllegalStateException("Wait for your turn");
+            TacticalCombat.cancelPath(player);
+        } else if (token != null) throw new IllegalStateException("The encounter has ended");
+    }
+
     private static Consumer<ServerPlayer> decode(Action action, FriendlyByteBuf buf) {
         return switch (action) {
             case SYNC -> player -> {
@@ -184,6 +192,53 @@ public final class ModPackets {
                 };
             }
             case TABLETOP_REST -> TabletopPackets::startRest;
+            case CAMPAIGN_PRESET -> {
+                var hero = readEnum(buf, net.dnd5ecraft.rules.campaign.CampaignHero.class);
+                var name = buf.readUtf(32);
+                var race = readEnum(buf, RaceType.class);
+                var background = readEnum(buf, BackgroundType.class);
+                var scores = readList(buf, 6, FriendlyByteBuf::readVarInt);
+                int hp = PacketPolicy.count(buf.readVarInt(), 100);
+                var traits = new CharacterSheetData.Personality(buf.readUtf(80), buf.readUtf(80), buf.readUtf(80), buf.readUtf(256));
+                yield player -> net.dnd5ecraft.server.CampaignCharacters.install(player, hero, hero.create(name, race, background, scores, hp, traits));
+            }
+            case CAMPAIGN_ACTION -> {
+                var campaignAction = readEnum(buf, net.dnd5ecraft.server.CampaignActions.Action.class);
+                UUID target = buf.readBoolean() ? buf.readUUID() : null;
+                var point = buf.readBoolean() ? block(cell(buf)) : null;
+                int option = buf.readInt();
+                var token = buf.readBoolean() ? turn(buf) : null;
+                if (option < -100 || option > 100) throw new IllegalArgumentException("Invalid campaign action");
+                yield player -> {
+                    if (net.dnd5ecraft.server.CampaignActions.turnBound(campaignAction)) checkCampaignTurn(player, token);
+                    net.dnd5ecraft.server.CampaignActions.perform(player, campaignAction, target, point, option);
+                };
+            }
+            case CAMPAIGN_COSMETICS -> player -> {
+                var traits = (net.dnd5ecraft.server.PlayerCharacter) player;
+                traits.dnd5e$setCosmetics(!traits.dnd5e$showsCosmetics());
+            };
+            case DIRECTOR -> {
+                var tool = readEnum(buf, net.dnd5ecraft.server.DmDirector.Tool.class);
+                UUID target = buf.readBoolean() ? buf.readUUID() : null;
+                int value = PacketPolicy.count(buf.readVarInt(), 1000);
+                yield player -> net.dnd5ecraft.server.DmDirector.run(player, tool, target, value);
+            }
+            case CAMPAIGN_SPELL -> {
+                var id = buf.readUtf(64);
+                UUID target = buf.readBoolean() ? buf.readUUID() : null;
+                var spellPoint = buf.readBoolean() ? block(cell(buf)) : null;
+                String phrase = buf.readUtf(160);
+                var token = buf.readBoolean() ? turn(buf) : null;
+                yield player -> {
+                    checkCampaignTurn(player, token);
+                    net.dnd5ecraft.server.CampaignMagic.cast(player, id, target, spellPoint, phrase);
+                };
+            }
+            case CAMPAIGN_POSE -> {
+                boolean kneel = buf.readBoolean();
+                yield player -> net.dnd5ecraft.server.CampaignPoses.toggle(player, kneel);
+            }
             case ROLL -> PhysicalD20Item::roll;
             case REQUEST_ROLL -> {
                 boolean save = buf.readBoolean();
@@ -676,6 +731,10 @@ public final class ModPackets {
         for (ServerPlayer recipient : player.serverLevel().players()) {
             if (player.distanceToSqr(recipient) <= 40 * 40) send(recipient, Update.ROLL, out -> roll(out, roll));
         }
+    }
+
+    public static void directorSelection(ServerPlayer player, UUID npc) {
+        send(player, TABLETOP, Update.DIRECTOR_SELECTION, out -> out.writeUUID(npc));
     }
 
     public static void sendDamage(ServerPlayer player, int damage) {

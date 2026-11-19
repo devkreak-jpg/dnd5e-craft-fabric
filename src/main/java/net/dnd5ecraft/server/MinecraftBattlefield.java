@@ -30,6 +30,94 @@ final class MinecraftBattlefield implements CombatManager.Battlefield {
                 && net.dnd5ecraft.network.TabletopPackets.supports(player);
     }
 
+    @Override public void spellVisual(String id, CombatantEntry caster, CombatantEntry target) {
+        var entity = entities.get(target.id());
+        if (entity == null) return;
+        var pos = entity.position().add(0, entity.getBbHeight() * .53, 0);
+        switch (id) {
+            case "shield" -> {
+                for (int ring = 0; ring < 3; ring++) for (int step = 0; step < 6; step++) {
+                    double angle = step * Math.PI / 3 + ring * .15;
+                    level.sendParticles(net.minecraft.core.particles.ParticleTypes.END_ROD, pos.x + Math.cos(angle) * .72,
+                            pos.y + (ring - 1) * .57, pos.z + Math.sin(angle) * .72, 1, 0, 0, 0, 0);
+                }
+                level.playSound(null, entity.blockPosition(), net.minecraft.sounds.SoundEvents.AMETHYST_BLOCK_CHIME,
+                        net.minecraft.sounds.SoundSource.PLAYERS, .8f, .75f);
+            }
+            case "absorb_elements" -> CampaignMagic.visual(level, pos, net.minecraft.core.particles.ParticleTypes.ENCHANT,
+                    net.minecraft.sounds.SoundEvents.RESPAWN_ANCHOR_CHARGE, 24);
+            case "fire_bolt" -> CampaignMagic.visual(level, pos, net.minecraft.core.particles.ParticleTypes.FLAME, net.minecraft.sounds.SoundEvents.BLAZE_SHOOT, 18);
+            case "lightning_lure" -> CampaignMagic.visual(level, pos, net.minecraft.core.particles.ParticleTypes.ELECTRIC_SPARK, net.minecraft.sounds.SoundEvents.LIGHTNING_BOLT_IMPACT, 24);
+            case "booming_blade", "thunderwave" -> CampaignMagic.visual(level, pos, net.minecraft.core.particles.ParticleTypes.SONIC_BOOM, net.minecraft.sounds.SoundEvents.LIGHTNING_BOLT_THUNDER, 1);
+            case "cure_wounds" -> CampaignMagic.visual(level, pos, net.minecraft.core.particles.ParticleTypes.HEART, net.minecraft.sounds.SoundEvents.AMETHYST_BLOCK_CHIME, 8);
+            case "faerie_fire" -> {
+                CampaignMagic.visual(level, pos, net.minecraft.core.particles.ParticleTypes.WITCH, net.minecraft.sounds.SoundEvents.ALLAY_AMBIENT_WITHOUT_ITEM, 16);
+                entity.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.GLOWING, 120, 0, false, false));
+            }
+            default -> { }
+        }
+    }
+
+    @Override public void zoneVisual(String id, net.dnd5ecraft.rules.spells.AoEGeometry.Area area) {
+        var origin = area.origin();
+        var p = new net.minecraft.world.phys.Vec3(origin.x(), origin.y(), origin.z());
+        if (id.equals("fog_cloud")) CampaignMagic.fogVisual(level, p);
+        if (id.equals("grease")) CampaignMagic.visual(level, p, net.minecraft.core.particles.ParticleTypes.FALLING_HONEY, net.minecraft.sounds.SoundEvents.HONEY_BLOCK_SLIDE, 30);
+    }
+
+    @Override public boolean canUseWeapon(CombatantEntry actor, CombatantEntry.Attack attack) {
+        var entity = entities.get(actor.id());
+        if (entity == null || !attack.weaponKey().contains(":")) return true;
+        return java.util.stream.Stream.of(entity.getMainHandItem(), entity.getOffhandItem()).anyMatch(stack ->
+                !net.dnd5ecraft.item.DndWeaponItem.broken(stack)
+                        && net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().equals(attack.weaponKey()));
+    }
+
+    @Override public void weaponHit(CombatantEntry actor, CombatantEntry target, CombatantEntry.Attack attack) {
+        if (!(entities.get(actor.id()) instanceof net.minecraft.server.level.ServerPlayer player)) return;
+        if (attack.weaponKey().equals("fist")) {
+            var struck = entities.get(target.id());
+            if (struck == null) return;
+            level.sendParticles(new net.minecraft.core.particles.BlockParticleOption(net.minecraft.core.particles.ParticleTypes.BLOCK,
+                    level.getBlockState(struck.blockPosition().below())), struck.getX(), struck.getY() + .25, struck.getZ(), 18, .25, .25, .25, .06);
+            level.playSound(null, struck.blockPosition(), net.minecraft.sounds.SoundEvents.ANVIL_LAND,
+                    net.minecraft.sounds.SoundSource.PLAYERS, .43f, .72f);
+            return;
+        }
+        if (!attack.melee() || PlayerSheets.get(player).filter(net.dnd5ecraft.rules.campaign.CampaignHero.ALEXANDER::matches).isEmpty()) return;
+        var stack = java.util.stream.Stream.of(player.getMainHandItem(), player.getOffhandItem())
+                .filter(held -> net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(held.getItem()).toString().equals(attack.weaponKey()))
+                .filter(held -> !held.isEnchanted() && net.dnd5ecraft.combat.PlayerWeaponProfiles.stats(held)
+                        .filter(stats -> stats.has(net.dnd5ecraft.rules.equipment.WeaponProperty.MAGICAL)).isEmpty())
+                .findFirst().orElse(null);
+        if (stack == null) return;
+        stack.getOrCreateTag().putBoolean("DndBroken", true);
+        level.sendParticles(net.minecraft.core.particles.ParticleTypes.ELECTRIC_SPARK, player.getX(), player.getY() + 1,
+                player.getZ(), 15, .3, .3, .3, .12);
+        level.playSound(null, player.blockPosition(), net.minecraft.sounds.SoundEvents.ITEM_BREAK,
+                net.minecraft.sounds.SoundSource.PLAYERS, .8f, .68f);
+    }
+
+    @Override public Cell echoCell(CombatantEntry actor) {
+        if (!(entities.get(actor.id()) instanceof net.minecraft.server.level.ServerPlayer player)) return null;
+        var echo = CampaignActions.companion(player, net.dnd5ecraft.entity.EchoAvatarEntity.class);
+        return echo == null ? null : TacticalCombat.cell(echo.blockPosition());
+    }
+
+    @Override public void echoSwing(CombatantEntry actor) {
+        if (!(entities.get(actor.id()) instanceof net.minecraft.server.level.ServerPlayer player)) return;
+        var echo = CampaignActions.companion(player, net.dnd5ecraft.entity.EchoAvatarEntity.class);
+        if (echo == null) return;
+        echo.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+        var at = echo.position();
+        level.sendParticles(net.minecraft.core.particles.ParticleTypes.ASH, at.x, at.y + .8, at.z, 14, .25, .35, .25, .02);
+    }
+
+    @Override public boolean nettable(CombatantEntry target) {
+        var entity = entities.get(target.id());
+        return entity != null && entity.getBbWidth() <= 2.1f;
+    }
+
     @Override
     public boolean canOccupy(Cell cell) {
         BlockPos position = position(cell);
@@ -46,6 +134,18 @@ final class MinecraftBattlefield implements CombatManager.Battlefield {
         LivingEntity entity = entities.get(mover.id());
         var moved = entity.getBoundingBox().move(cell.x() + .5 - entity.getX(), cell.y() - entity.getY(), cell.z() + .5 - entity.getZ());
         return level.noCollision(entity, moved);
+    }
+
+    @Override public boolean canSwap(CombatantEntry mover, CombatantEntry other) {
+        Cell destination = other.cell();
+        if (!canOccupy(destination)) return false;
+        var entity = entities.get(mover.id());
+        var counterpart = entities.get(other.id());
+        if (entity == null || counterpart == null) return false;
+        var bounds = entity.getBoundingBox().move(destination.x() + .5 - entity.getX(), destination.y() - entity.getY(),
+                destination.z() + .5 - entity.getZ());
+        return !level.getBlockCollisions(entity, bounds).iterator().hasNext()
+                && level.getEntities(entity, bounds, candidate -> candidate != counterpart && candidate.canBeCollidedWith()).isEmpty();
     }
 
     @Override
@@ -79,6 +179,7 @@ final class MinecraftBattlefield implements CombatManager.Battlefield {
 
     @Override
     public boolean blocksSight(Cell cell) {
+        if (CampaignMagic.obscures(level, position(cell))) return true;
         BlockPos pos = position(cell);
         return !loaded(pos) || level.getBlockState(pos).isSolidRender(level, pos);
     }

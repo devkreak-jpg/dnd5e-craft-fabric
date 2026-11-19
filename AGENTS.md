@@ -2,7 +2,7 @@
 
 Minecraft **1.20.1**, Java **17**, official Mojang mappings, mod ID **`dnd-5e-craft`**, and base package **`net.dnd5ecraft`**. The project pins Fabric Loader **0.20.1** and Fabric API **0.92.12+1.20.1**.
 
-Use the existing checkout and keep `loom.officialMojangMappings()` and `splitEnvironmentSourceSets()` enabled. Put client API calls and renderers in `src/client/java`. Keep common classes loadable on a dedicated server and keep each Mixin configuration on its intended side. Prefix Mixin members with `dnd5e$`, mark additions `@Unique`, and use injections. Register NPC attributes on the common entry point and the matching renderer on the client entry point. Use Minecraft 1.20.1's three-argument `DimensionDataStorage.computeIfAbsent` and the supplier form of `CommandSourceStack.sendSuccess`.
+Use the existing checkout and keep `loom.officialMojangMappings()` and `splitEnvironmentSourceSets()` enabled. Put client API calls and renderers in `src/client/java`. Keep common classes loadable on a dedicated server and keep each Mixin configuration on its intended side. Prefix Mixin members with `dnd5e$`, mark additions `@Unique`, and use injections. Register attributes for the NPC, cannon, and echo on the common entry point and their renderers on the client entry point. Use Minecraft 1.20.1's three-argument `DimensionDataStorage.computeIfAbsent` and the supplier form of `CommandSourceStack.sendSuccess`.
 
 Run from the repository root with Java 17 and a populated Gradle cache.
 
@@ -13,7 +13,7 @@ java -cp build/classes/java/main net.dnd5ecraft.rules.RulesSelfTestRunner
 ./gradlew --offline --no-daemon build --console=plain -q | tail -n 60
 ```
 
-The installable remapped artifact is `build/libs/dnd-5e-craft-1.2.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 2 includes the advanced trigger settings and sheet armor field. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
+The installable remapped artifact is `build/libs/dnd-5e-craft-3.0.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 3 includes campaign actions, director selection, expanded reaction offers, and tactical turn tokens. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
 
 ## Phase checklist
 
@@ -21,8 +21,8 @@ The phase checks cover the offline build, the dedicated-server GameTests, and th
 
 - [x] Phase 0. Namespace, build setup, Mojang mappings, resources, and entry points.
 - [x] Phase 1. Dice, abilities, equipment, conditions, character progression, rests, and persistence.
-- [x] Phase 2. Spell registry with 47 entries, spell slots, concentration, 3D targeting, turn economy, combat actions, and reactions.
-- [x] Phase 3. Canonical bestiary of 15 presets, NPCs, dialogue, traps, cutscenes, seven items, commands, and server Mixins.
+- [x] Phase 2. Spell registry with 56 entries, spell slots, concentration, 3D targeting, turn economy, combat actions, and reactions.
+- [x] Phase 3. Canonical bestiary of 15 presets, NPCs, dialogue, traps, cutscenes, 55 registered items, commands, and server Mixins.
 - [x] Phase 4. Versioned C2S requests and S2C updates for characters, encounters, reactions, DM party data, notices, and screen signals.
 - [x] Phase 5A. Client state, keybinds, interactive character sheet, combat HUD, NPC renderer, and starter English and Russian strings.
 - [x] Phase 5B. Character creation, spellbook, dialogue, NPC Studio, trigger-zone editor, and DM console screens.
@@ -40,6 +40,16 @@ The phase checks cover the offline build, the dedicated-server GameTests, and th
 - Use the sheet header to set roll mode, whisper to online DMs, or spend Inspiration on the next d20. Click ability cards, skill rows, or weapon buttons to roll. Right-click a tray die to build a pool. A natural 20 on a weapon hit applies to the next damage roll for the same equipped weapon.
 - Start a short rest to spend hit dice from the sheet. Tactical maneuvers and class features continue to use server turn checks. Use the DM console to send a roll request, and press **R** to answer it.
 - The optional tabletop channel carries roll cards, prompts, and concentration details within Protocol v2. Whisper recipients are the roller and online operators. The spellbook filters available spells, and checked dialogue displays its result before advancing.
+
+## v3.0 Campaign Edition
+
+- Open **Party Presets** from character creation or use `/dnd preset <finneas|alexander|harlequin|minotaur>`. Preset editing covers name, race, background, six ability scores, maximum HP, and personality. The preset chooses the hero's class progression, subclass, and starting gear. Operators can change an existing character's preset. Starting equipment is granted on first creation.
+- The Actions tab opens the hero's campaign actions. Press **H** to cycle tactical attack profiles, including thrown melee weapons. Press **P** to fire a summoned cannon or **Shift+P** to use its HUD button. At zero HP, **R** rolls a death save when eligible.
+- Hold **V** and release over an action in the radial menu. Hold **Shift** for the kneeling pose. **F12** toggles the HUD keys. **O** places a world ping. Enable racial features from the Inventory tab and Keen Smell from Alexander's sheet.
+- Operators can press **Shift+N** for the Director Palette. Right-click an NPC with the DM wand to select it, then click a destination. Sneak-click a destination to add a waypoint while the selected NPC is in Patrol mode. Use **Speak as NPC** or `/dnd dm speak <npc>` to toggle NPC speech. The NPC panel can pick the director's pair after a Harlequin uses Scene Change during their turn.
+- The cannon and echo track their owners and persist with their entity data. The server controls tactical movement, activation costs, targets, and reactions. The client renders companion models, race geometry, actor selection, and the new healthbar. Natural food regeneration leaves the tactical sheet unchanged. Spell and potion healing route through the tactical health rules.
+- Harlequin d20 windows support tactical attacks and direct spell saves. Tabletop d20s and other synchronous checks still use the existing resolution paths. Standard ranged item profiles expose weapon properties and ranges. Tactical ammo consumption and Loading limits are pending.
+- `CampaignAssetIntegrityTest` checks the item models, decoded PNGs, and crowd skins. `LocalizationTest` checks English and Russian keys and substitutions. Campaign rules tests exercise hero values, combat reactions, weapon profiles, and speed boundaries.
 
 ## Phase 0 files
 

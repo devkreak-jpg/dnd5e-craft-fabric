@@ -9,7 +9,7 @@ import net.minecraft.client.renderer.entity.HumanoidMobRenderer;
 import net.minecraft.resources.ResourceLocation;
 
 public final class DndNpcEntityRenderer extends HumanoidMobRenderer<DndNpcEntity, HumanoidModel<DndNpcEntity>> {
-    private static final ResourceLocation ADVENTURER = new ResourceLocation("minecraft", "textures/entity/player/wide/steve.png");
+    private static final ResourceLocation ADVENTURER = new ResourceLocation("dnd-5e-craft", "textures/entity/campaign_npc.png");
     private static final ResourceLocation UNDEAD = new ResourceLocation("minecraft", "textures/entity/zombie/zombie.png");
     private static final ResourceLocation SKELETON = new ResourceLocation("minecraft", "textures/entity/skeleton/skeleton.png");
 

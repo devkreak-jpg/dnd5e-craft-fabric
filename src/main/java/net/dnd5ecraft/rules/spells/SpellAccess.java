@@ -13,6 +13,11 @@ public final class SpellAccess {
 
     public static Map<String, Ability> available(CharacterSheetData sheet) {
         Map<String, Ability> result = new TreeMap<>();
+        var finneas = net.dnd5ecraft.rules.campaign.CampaignHero.FINNEAS;
+        if (finneas.matches(sheet)) {
+            finneas.spells().forEach(id -> result.put(id, Ability.INTELLIGENCE));
+            return Map.copyOf(result);
+        }
         for (Spell spell : SpellRegistry5e.all().values()) {
             for (ClassType type : ClassType.values()) {
                 int level = sheet.classLevels().getOrDefault(type, 0);
@@ -22,6 +27,7 @@ public final class SpellAccess {
                 result.merge(spell.id(), casting, (first, next) -> sheet.score(next) > sheet.score(first) ? next : first);
             }
         }
+        if (sheet.race() == net.dnd5ecraft.rules.character.RaceType.TRITON) result.put("fog_cloud", Ability.CHARISMA);
         return Map.copyOf(result);
     }
 

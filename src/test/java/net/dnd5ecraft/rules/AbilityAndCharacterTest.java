@@ -111,7 +111,7 @@ class AbilityAndCharacterTest {
             return 1;
         }));
         assertEquals(2, rolls.get());
-        assertEquals(0.75, RaceType.HALFLING.scale());
+        assertEquals(0.68, RaceType.HALFLING.scale());
         assertEquals(60, RaceType.HALF_ORC.darkvisionFeet());
     }
 

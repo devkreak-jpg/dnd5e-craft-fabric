@@ -18,7 +18,9 @@ public enum ClassType {
     ROGUE(8, DEXTERITY, INTELLIGENCE, Set.of(DEXTERITY)),
     SORCERER(6, CONSTITUTION, CHARISMA, Set.of(CHARISMA)),
     WARLOCK(8, WISDOM, CHARISMA, Set.of(CHARISMA)),
-    WIZARD(6, INTELLIGENCE, WISDOM, Set.of(INTELLIGENCE));
+    WIZARD(6, INTELLIGENCE, WISDOM, Set.of(INTELLIGENCE)),
+    ARTIFICER(8, CONSTITUTION, INTELLIGENCE, Set.of(INTELLIGENCE)),
+    HARLEQUIN(8, DEXTERITY, CHARISMA, Set.of(DEXTERITY), Set.of(CHARISMA));
 
     private final int hitDie;
     private final Set<Ability> savingThrows;
@@ -44,7 +46,7 @@ public enum ClassType {
     public CasterTier casterTier() {
         return switch (this) {
             case BARD, CLERIC, DRUID, SORCERER, WIZARD -> CasterTier.FULL;
-            case PALADIN, RANGER -> CasterTier.HALF;
+            case PALADIN, RANGER, ARTIFICER -> CasterTier.HALF;
             case WARLOCK -> CasterTier.PACT;
             default -> CasterTier.NONE;
         };
@@ -54,7 +56,7 @@ public enum ClassType {
         return switch (this) {
             case BARD, PALADIN, SORCERER, WARLOCK -> java.util.Optional.of(CHARISMA);
             case CLERIC, DRUID, RANGER -> java.util.Optional.of(WISDOM);
-            case WIZARD -> java.util.Optional.of(INTELLIGENCE);
+            case WIZARD, ARTIFICER -> java.util.Optional.of(INTELLIGENCE);
             default -> java.util.Optional.empty();
         };
     }

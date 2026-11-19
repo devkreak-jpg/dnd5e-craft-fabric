@@ -12,12 +12,17 @@ import java.util.UUID;
 import net.dnd5ecraft.combat.CombatEncounterState;
 import net.dnd5ecraft.combat.CombatManager;
 import net.dnd5ecraft.combat.CombatantEntry;
+import net.dnd5ecraft.combat.GridMovementTracker;
 import net.dnd5ecraft.combat.GridMovementTracker.Cell;
 import net.dnd5ecraft.combat.MonsterAiDirector;
 import net.dnd5ecraft.combat.PlayerWeaponProfiles;
 import net.dnd5ecraft.combat.ReactionWindowManager.Kind;
 import net.dnd5ecraft.combat.TurnEconomy.Resource;
 import net.dnd5ecraft.entity.DndNpcEntity;
+import net.dnd5ecraft.entity.EchoAvatarEntity;
+import net.dnd5ecraft.entity.CampaignCompanion;
+import net.dnd5ecraft.item.ModItems;
+import net.dnd5ecraft.rules.campaign.CampaignRules;
 import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.network.ModPackets;
 import net.dnd5ecraft.network.PacketPolicy.TurnToken;
@@ -310,6 +315,117 @@ public final class TacticalCombat {
         return true;
     }
 
+    public static boolean allied(ServerPlayer player, LivingEntity target) {
+        if (player == target) return true;
+        var encounter = session(player);
+        if (encounter != null && session(target) == encounter) return encounter.manager.allied(player.getUUID(), target.getUUID());
+        if (target instanceof ServerPlayer) return true;
+        return target instanceof DndNpcEntity npc && npc.attitudeFor(player.getUUID()) == NpcAttitude.FRIENDLY;
+    }
+
+    public static boolean campaignAttackHits(ServerPlayer player, LivingEntity target, int bonus) {
+        var encounter = session(player);
+        if (encounter != null && session(target) == encounter) return encounter.manager.campaignHit(player.getUUID(), target.getUUID(), bonus);
+        int roll = PlayerRules.dice(player).applyAsInt(20);
+        return roll == 20 || roll != 1 && roll + bonus >= (target instanceof DndNpcEntity npc ? npc.preset().armor() : 10 + target.getArmorValue());
+    }
+
+    public static boolean campaignSave(ServerPlayer source, LivingEntity target, Ability ability, int dc) {
+        var encounter = session(target);
+        if (encounter != null) return encounter.manager.campaignSave(target.getUUID(), ability, dc);
+        if (target instanceof ServerPlayer player) return PlayerRules.save(player, ability, dc).succeeds();
+        int modifier = target instanceof DndNpcEntity npc ? npc.preset().combatStats().saveModifier(ability) : 0;
+        return PlayerRules.dice(source).applyAsInt(20) + modifier >= dc;
+    }
+
+    public static void campaignDamage(ServerPlayer player, LivingEntity target, DamageType5e type, int amount) {
+        var encounter = session(target);
+        if (encounter != null && session(player) == encounter) {
+            encounter.manager.damage(player.getUUID(), target.getUUID(), Map.of(type, amount), false);
+        } else if (encounter == null && !environmentDamage(target, type, amount)) {
+            target.hurt(player.damageSources().magic(), amount);
+        }
+    }
+
+    public static void campaignPush(ServerPlayer player, LivingEntity target, int blocks, Vec3 origin) {
+        var delta = target.position().subtract(origin);
+        int dx = (int) Math.signum(delta.x), dz = (int) Math.signum(delta.z);
+        var encounter = session(target);
+        if (encounter != null && session(player) == encounter) {
+            for (int i = 0; i < blocks; i++) {
+                var from = encounter.state.require(target.getUUID()).cell();
+                var to = new Cell(from.x() + dx, from.y(), from.z() + dz);
+                if (!encounter.manager.relocate(target.getUUID(), to, net.dnd5ecraft.combat.OpportunityAttackDetector.Movement.FORCED, now())) break;
+            }
+        } else if (encounter == null) {
+            target.knockback(blocks * .48, -delta.x, -delta.z);
+        }
+    }
+
+    public static void campaignTempHp(LivingEntity target, int amount) {
+        var encounter = session(target);
+        if (encounter != null) {
+            if (!encounter.paused()) encounter.manager.campaignTempHp(target.getUUID(), amount);
+        } else if (target instanceof ServerPlayer player) {
+            PlayerSheets.get(player).ifPresent(sheet -> PlayerSheets.set(player, sheet.withCombatState(
+                    sheet.hitPoints().grantTemporary(amount), sheet.conditions(), sheet.deathSaves())));
+        }
+    }
+
+    public static void swapEcho(ServerPlayer player, BlockPos echo) {
+        var encounter = session(player);
+        if (encounter == null) throw new IllegalStateException("No tactical encounter");
+        encounter.manager.campaignSwap(player.getUUID(), cell(echo), CampaignRules.echoSwapCostFeet(), now());
+        encounter.synchronize();
+    }
+
+    public static void orderNpc(ServerPlayer dm, DndNpcEntity npc, UUID target, boolean end) {
+        var encounter = session(npc);
+        if (!dm.hasPermissions(2) || encounter == null || encounter.paused() || dm.level() != npc.level()
+                || npc.behavior() != net.dnd5ecraft.entity.NpcBehaviorMode.DM_COMMANDED) {
+            throw new IllegalStateException("A DM-commanded tactical NPC is required");
+        }
+        if (end) encounter.manager.endTurn(npc.getUUID(), now());
+        else if (target != null) encounter.manager.attack(npc.getUUID(), target, 0, now());
+        else throw new IllegalArgumentException("Choose an attack target");
+    }
+
+    public static void directScenePair(ServerPlayer dm, UUID target, BlockPos second) {
+        var encounter = ACTIVE.get(dm.serverLevel());
+        if (!dm.hasPermissions(2) || encounter == null || encounter.paused() || second == null || target == null) {
+            throw new IllegalStateException("The director needs an active Scene Change");
+        }
+        var caster = encounter.manager.directorScenePair(target, cell(second), now());
+        if (encounter.entities.get(caster) instanceof ServerPlayer player) {
+            ModPackets.notice(player, Component.translatable("dnd-5e-craft.ui.campaign.scene_directed"));
+        }
+    }
+
+    public static void directNpc(ServerPlayer dm, DndNpcEntity npc, BlockPos pos) {
+        if (!dm.hasPermissions(2) || dm.level() != npc.level() || !dm.serverLevel().isLoaded(pos)
+                || npc.blockPosition().distSqr(pos) > 4096) throw new IllegalArgumentException("NPC destination is unavailable");
+        var encounter = session(npc);
+        if (encounter == null) {
+            if (npc.behavior() == net.dnd5ecraft.entity.NpcBehaviorMode.STATIONARY) return;
+            npc.getNavigation().moveTo(pos.getX() + .5, pos.getY(), pos.getZ() + .5, 1);
+            return;
+        }
+        if (encounter.paused() || encounter.manager.reactionWindow().isPresent()
+                || !encounter.manager.snapshot().current().filter(npc.getUUID()::equals).isPresent()) {
+            throw new IllegalStateException("Wait for the NPC's turn");
+        }
+        var goal = cell(pos);
+        var manager = encounter.manager;
+        var options = manager.reachable(npc.getUUID());
+        var nearest = options.keySet().stream().min(java.util.Comparator.comparingInt(goal::distanceFeet)).orElse(goal);
+        var path = manager.path(npc.getUUID(), nearest).orElseThrow(() -> new IllegalStateException("No reachable destination"));
+        encounter.path.clear();
+        encounter.pendingStep = null;
+        encounter.pathActor = npc.getUUID();
+        encounter.path.addAll(path.cells().subList(1, path.cells().size()));
+        encounter.advancePath(now());
+    }
+
     public static boolean environmentDamage(LivingEntity target, DamageType5e damage, int amount) {
         Session session = session(target);
         if (session != null && session.paused()) return false;
@@ -343,6 +459,7 @@ public final class TacticalCombat {
         if (!(target.level() instanceof ServerLevel level) || source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)) {
             return Optional.empty();
         }
+        if (target instanceof CampaignCompanion) return Optional.empty();
         Session session = session(target);
         Session attacker = source.getEntity() instanceof LivingEntity living ? session(living) : null;
         if (!Float.isFinite(amount) || amount <= 0) return Optional.of(false);
@@ -351,7 +468,7 @@ public final class TacticalCombat {
             if (target instanceof ServerPlayer player) {
                 var sheet = PlayerSheets.get(player).orElse(null);
                 if (CinematicFreeze.frozen(player)) return Optional.of(false);
-                if (sheet != null && sheet.hitPoints().current() == 0) {
+                if (sheet != null) {
                     if (player.isInvulnerableTo(source) || player.getAbilities().invulnerable || player.hurtTime > 0) {
                         return Optional.of(false);
                     }
@@ -406,6 +523,23 @@ public final class TacticalCombat {
         }
     }
 
+    public static boolean interceptVanillaHealing(LivingEntity entity, float amount) {
+        if (!(entity instanceof ServerPlayer player)) return false;
+        var sheet = PlayerSheets.get(player).orElse(null);
+        if (sheet == null) return false;
+        if (!Float.isFinite(amount) || amount <= 0 || sheet.deathSaves().state() == DeathSaveTracker.State.DEAD) return true;
+        int restored = (int) Math.ceil(amount);
+        var session = session(player);
+        if (session != null) {
+            if (!session.paused()) session.manager.restoreFromVanillaMagic(player.getUUID(), restored);
+        } else {
+            var health = sheet.hitPoints().heal(restored);
+            PlayerSheets.set(player, sheet.withCombatState(health, sheet.conditions(), sheet.deathSaves().afterHealing(health.current())));
+            player.setHealth(Math.min(player.getMaxHealth(), health.current()));
+        }
+        return true;
+    }
+
     public static boolean drinkHealingDraught(LivingEntity drinker, int amount) {
         Session session = session(drinker);
         if (session != null) {
@@ -422,8 +556,8 @@ public final class TacticalCombat {
         if (drinker instanceof ServerPlayer player && PlayerSheets.get(player).isPresent()) {
             var sheet = PlayerSheets.get(player).orElseThrow();
             if (sheet.deathSaves().state() == DeathSaveTracker.State.DEAD) return false;
-            var healed = sheet.hitPoints().heal(amount);
-            PlayerSheets.set(player, sheet.withCombatState(healed, sheet.conditions(), sheet.deathSaves().afterHealing(healed.current())));
+            interceptVanillaHealing(player, amount);
+            return true;
         } else if (drinker instanceof DndNpcEntity npc) {
             if (npc.deathSaves().state() == DeathSaveTracker.State.DEAD) return false;
             var healed = npc.tacticalHealth().heal(amount);
@@ -442,6 +576,7 @@ public final class TacticalCombat {
         private record Detection(UUID viewer, UUID target, int check) {}
         private UUID pathActor;
         private Cell pendingStep;
+        private UUID lastTurn;
         private UUID deathSaveActor;
         private long deathSaveUntil;
         private final Map<UUID, LivingEntity> entities = new LinkedHashMap<>();
@@ -463,6 +598,12 @@ public final class TacticalCombat {
             Cell cell = cell(entity.blockPosition());
             if (entity instanceof DndNpcEntity npc) {
                 var stats = npc.preset().combatStats();
+                if (!npc.preset().civilian() && PlayerWeaponProfiles.stats(npc.getMainHandItem()).isPresent()) {
+                    var profile = PlayerWeaponProfiles.npc(npc.getMainHandItem(), stats);
+                    stats = new CombatantEntry.Stats(stats.speedFeet(), stats.armorClass(), stats.armored(), stats.darkvisionFeet(),
+                            stats.level(), stats.abilityScores(), stats.savingThrows(), stats.classes(), stats.spells(),
+                            stats.rituals(), stats.traits(), List.of(profile));
+                }
                 int initiative = initiative(npc, stats.abilityScores().get(Ability.DEXTERITY), RollMode.NORMAL);
                 return new CombatantEntry(npc.getUUID(), npc.getDisplayName().getString(), 1, initiative, cell, stats,
                         npc.tacticalHealth(), npc.deathSaves(), npc.preset().defenses(), ExhaustionLevel.NONE, List.of(),
@@ -470,21 +611,23 @@ public final class TacticalCombat {
             }
             ServerPlayer player = (ServerPlayer) entity;
             var sheet = PlayerSheets.getOrCreate(player);
-            RollMode mode = RollMode.from(false, sheet.exhaustion().abilityCheckDisadvantage());
+            RollMode mode = RollMode.from(player.getOffhandItem().is(ModItems.SENTINEL_SHIELD), sheet.exhaustion().abilityCheckDisadvantage());
             int initiative = initiative(player, sheet.score(Ability.DEXTERITY), mode)
                     + (sheet.feats().contains(net.dnd5ecraft.rules.character.FeatType.ALERT) ? 5 : 0);
             Formula armor = armorFormula(player, sheet);
             var spells = SpellAccess.available(sheet);
             var attacks = new ArrayList<CombatantEntry.Attack>();
             var main = player.getMainHandItem();
-            var mainId = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(main.getItem());
-            boolean requiresBothHands = WeaponStatsRegistry.findItem(mainId.getNamespace(), mainId.getPath())
+            boolean requiresBothHands = PlayerWeaponProfiles.stats(main)
                     .filter(stats -> stats.has(WeaponProperty.TWO_HANDED)).isPresent();
             if (requiresBothHands && !player.getOffhandItem().isEmpty()) main = net.minecraft.world.item.ItemStack.EMPTY;
             attacks.add(PlayerWeaponProfiles.attack(main, sheet, player.getOffhandItem().isEmpty()));
-            if (player.getOffhandItem().getItem() instanceof net.minecraft.world.item.TieredItem
-                    || player.getOffhandItem().is(Items.TRIDENT)) {
+            if (PlayerWeaponProfiles.available(player, net.dnd5ecraft.rules.ability.TabletopRolls.Weapon.OFF_HAND)) {
                 attacks.add(PlayerWeaponProfiles.attack(player.getOffhandItem(), sheet, false));
+            }
+            PlayerWeaponProfiles.thrown(main, sheet).ifPresent(attacks::add);
+            if (PlayerWeaponProfiles.available(player, net.dnd5ecraft.rules.ability.TabletopRolls.Weapon.OFF_HAND)) {
+                PlayerWeaponProfiles.thrown(player.getOffhandItem(), sheet).ifPresent(attacks::add);
             }
             var result = CombatantEntry.fromSheet(player.getUUID(), 0, initiative, cell, sheet, armorClass(player, sheet),
                     player.getArmorValue() > 0, spells, SpellAccess.rituals(sheet, spells), Set.of(), attacks, Defenses.NONE);
@@ -554,6 +697,7 @@ public final class TacticalCombat {
                 }
                 if (!current.canAct()) manager.endTurn(current.id(), time);
                 else if (entities.get(current.id()) instanceof DndNpcEntity npc
+                        && npc.behavior() != net.dnd5ecraft.entity.NpcBehaviorMode.DM_COMMANDED
                         && level.players().stream().noneMatch(player -> DmMode.controls(player, npc))) act(npc, current, time);
             }
             synchronize();
@@ -707,6 +851,7 @@ public final class TacticalCombat {
                 npc.syncCombatHealth(entry.hitPoints(), entry.deathSaves());
             } else if (entity instanceof ServerPlayer player) {
                 var sheet = PlayerSheets.getOrCreate(player);
+                ((PlayerCharacter) player).dnd5e$campaignFlags(entry.campaignFlags());
                 if (!sheet.hitPoints().equals(entry.hitPoints()) || !sheet.deathSaves().equals(entry.deathSaves())
                         || !sheet.conditions().equals(entry.activeConditions()) || !sheet.resources().equals(entry.characterResources())) {
                     PlayerSheets.set(player, sheet.withCombatState(entry.hitPoints(), entry.activeConditions(), entry.deathSaves())
@@ -721,7 +866,23 @@ public final class TacticalCombat {
             for (var event : events) {
                 if (event.type() == CombatManager.EventType.DAMAGE && event.value() > 0
                         && entities.get(event.target()) instanceof ServerPlayer target) ModPackets.sendDamage(target, event.value());
+                if (event.type() == CombatManager.EventType.CAMPAIGN && entities.get(event.target()) != null) {
+                    var point = entities.get(event.target()).position();
+                    if (event.detail().equals("earth")) {
+                        level.sendParticles(new net.minecraft.core.particles.BlockParticleOption(net.minecraft.core.particles.ParticleTypes.BLOCK,
+                                net.minecraft.world.level.block.Blocks.COARSE_DIRT.defaultBlockState()), point.x, point.y + .15, point.z, 32, .55, .1, .55, .07);
+                    } else {
+                        if (event.detail().equals("final_act")) level.playSound(null, BlockPos.containing(point),
+                                net.minecraft.sounds.SoundEvents.BELL_BLOCK, net.minecraft.sounds.SoundSource.PLAYERS, 1.0f, .62f);
+                        level.sendParticles(net.minecraft.core.particles.ParticleTypes.WITCH, point.x, point.y + .7, point.z, 20, .35, .4, .35, .06);
+                    }
+                }
                 if (event.type() != CombatManager.EventType.TURN) continue;
+                if (lastTurn != null && entities.get(lastTurn) instanceof ServerPlayer previous) {
+                    var echo = CampaignActions.companion(previous, EchoAvatarEntity.class);
+                    if (echo != null && !CampaignRules.echoInRange(previous.distanceTo(echo))) echo.discard();
+                }
+                lastTurn = event.actor();
                 var actor = entities.get(event.actor());
                 for (var entity : entities.values()) {
                     if (entity instanceof ServerPlayer player) {
@@ -734,7 +895,7 @@ public final class TacticalCombat {
                 for (var offer : window.offers()) {
                     if (!(entities.get(offer.reactor()) instanceof ServerPlayer player) || ModPackets.supports(player)) continue;
                     String kind = offer.kind().name().toLowerCase(java.util.Locale.ROOT);
-                    int slot = offer.kind() == Kind.SHIELD ? 1 : offer.kind() == Kind.COUNTERSPELL ? 3 : 0;
+                    int slot = (offer.kind() == Kind.SHIELD || offer.kind() == Kind.ABSORB_ELEMENTS) ? 1 : offer.kind() == Kind.COUNTERSPELL ? 3 : 0;
                     player.sendSystemMessage(Component.translatable("dnd-5e-craft.combat.react", kind).withStyle(style ->
                             style.withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/dnd react " + window.id() + " " + kind + " " + slot))));
                 }
@@ -758,8 +919,11 @@ public final class TacticalCombat {
         return CombatEncounterState.rollInitiative(dexterity, mode, sides -> 1 + entity.getRandom().nextInt(sides));
     }
 
-    private static Formula armorFormula(ServerPlayer player, CharacterSheetData sheet) {
-        if (player.getItemBySlot(EquipmentSlot.CHEST).getItem() instanceof ArmorItem armor) {
+    static Formula armorFormula(net.minecraft.world.entity.player.Player player, CharacterSheetData sheet) {
+        var chest = player.getItemBySlot(EquipmentSlot.CHEST);
+        if (chest.is(ModItems.SCALE_MAIL)) return Formula.SCALE_MAIL;
+        if (chest.is(ModItems.SPLINT_ARMOR)) return Formula.SPLINT;
+        if (chest.getItem() instanceof ArmorItem armor) {
             var material = armor.getMaterial();
             if (material == ArmorMaterials.LEATHER) return Formula.LEATHER;
             if (material == ArmorMaterials.CHAIN) return Formula.CHAIN_SHIRT;
@@ -768,15 +932,17 @@ public final class TacticalCombat {
         }
         if (player.getArmorValue() > 0) return Formula.LEATHER;
         if (sheet.startingClass() == ClassType.BARBARIAN) return Formula.BARBARIAN;
-        if (!player.getOffhandItem().is(Items.SHIELD) && (sheet.startingClass() == ClassType.MONK || (sheet.classLevels().containsKey(ClassType.MONK)
+        if (!PlayerWeaponProfiles.shield(player.getOffhandItem()) && (sheet.startingClass() == ClassType.MONK || (sheet.classLevels().containsKey(ClassType.MONK)
                 && !sheet.classLevels().containsKey(ClassType.BARBARIAN)))) return Formula.MONK;
         return sheet.classLevels().containsKey(ClassType.BARBARIAN) ? Formula.BARBARIAN : Formula.UNARMORED;
     }
 
-    public static int armorClass(ServerPlayer player, CharacterSheetData sheet) {
+    public static int armorClass(net.minecraft.world.entity.player.Player player, CharacterSheetData sheet) {
         return ArmorFormulaEngine.armorClass(armorFormula(player, sheet), sheet.score(Ability.DEXTERITY),
-                sheet.score(Ability.CONSTITUTION), sheet.score(Ability.WISDOM), player.getOffhandItem().is(Items.SHIELD),
-                sheet.feats().contains(net.dnd5ecraft.rules.character.FeatType.MEDIUM_ARMOR_MASTER));
+                sheet.score(Ability.CONSTITUTION), sheet.score(Ability.WISDOM), PlayerWeaponProfiles.shield(player.getOffhandItem()),
+                sheet.feats().contains(net.dnd5ecraft.rules.character.FeatType.MEDIUM_ARMOR_MASTER))
+                + (player.getItemBySlot(EquipmentSlot.CHEST).is(ModItems.SCALE_MAIL)
+                    && sheet.subclasses().containsValue(net.dnd5ecraft.rules.character.SubclassType.ARTILLERIST) ? 1 : 0);
     }
 
     public static Cell cell(BlockPos position) { return new Cell(position.getX(), position.getY(), position.getZ()); }

@@ -3,6 +3,12 @@ package net.dnd5ecraft.client.gui.hud;
 import java.util.ArrayList;
 import java.util.List;
 import net.dnd5ecraft.client.ClientActions;
+import net.dnd5ecraft.client.ClientCampaign;
+import net.dnd5ecraft.entity.EchoAvatarEntity;
+import net.dnd5ecraft.entity.EldritchCannonEntity;
+import net.dnd5ecraft.rules.character.ClassFeature;
+import net.dnd5ecraft.server.PlayerCharacter;
+import net.dnd5ecraft.server.TacticalCombat;
 import net.dnd5ecraft.client.ClientDndState;
 import net.dnd5ecraft.client.keybind.ModKeybinds;
 import net.dnd5ecraft.combat.TurnEconomy.Resource;
@@ -31,6 +37,17 @@ public final class CombatHudOverlay {
         int width = g.guiWidth();
         int height = g.guiHeight();
         var combat = ClientDndState.combat();
+        campaignVitals(g, client, combat);
+        if (ModKeybinds.showHotkeys() && client.screen == null) {
+            var keys = List.of(text("campaign.key_sheet", ModKeybinds.sheetKey()),
+                    text("campaign.key_magic", ModKeybinds.spellbookKey()), text("campaign.key_roll", ModKeybinds.rollKey()),
+                    text("campaign.key_wheel", ModKeybinds.wheelKey()), text("campaign.key_hide", ModKeybinds.hotkeysKey()));
+            int y = height - 13 - (keys.size() - 1) * 10;
+            for (var key : keys) {
+                g.drawString(client.font, key, 6, y, MUTED, true);
+                y += 10;
+            }
+        }
         if (combat != null) {
             centered(g, client.font, text("hud.round", combat.round()), width / 2, 5, GOLD);
             int mx = (int) (client.mouseHandler.xpos() * width / client.getWindow().getScreenWidth());
@@ -50,6 +67,89 @@ public final class CombatHudOverlay {
         prompt(g, client.font, width, height);
         var banner = ClientDndState.banner();
         if (banner != null) centered(g, client.font, banner.message(), width / 2, height / 3, GOLD);
+    }
+
+    private static void campaignVitals(GuiGraphics g, Minecraft client, Combat combat) {
+        var sheet = ClientDndState.sheet();
+        var player = client.player;
+        if (sheet == null || player.isSpectator() || client.getCameraEntity() != player) return;
+        int width = Math.min(210, g.guiWidth() - 14);
+        int x = (g.guiWidth() - width) / 2;
+        int y = g.guiHeight() - 49;
+        var hp = sheet.hitPoints();
+        var font = client.font;
+        int flags = ((PlayerCharacter) player).dnd5e$campaignFlags();
+        if ((flags & 1) != 0) {
+            int alpha = 22 + (int) (12 * (1 + Math.sin(player.tickCount / 5.0)));
+            int tint = alpha << 24 | 0x9A1818;
+            g.fill(0, 0, g.guiWidth(), 5, tint);
+            g.fill(0, g.guiHeight() - 5, g.guiWidth(), g.guiHeight(), tint);
+        }
+        panel(g, x, y, width, 23, GOLD);
+        if (hp.current() == 0) {
+            var death = sheet.deathSaves();
+            for (int i = 0; i < 3; i++) {
+                g.fill(x + 6 + i * 8, y + 8, x + 12 + i * 8, y + 14, i < death.successes() ? EMERALD : BORDER);
+                g.fill(x + width - 28 + i * 8, y + 8, x + width - 22 + i * 8, y + 14, i < death.failures() ? CRIMSON : BORDER);
+            }
+            Component life = death.state() == net.dnd5ecraft.rules.conditions.DeathSaveTracker.State.DYING
+                    ? text("campaign.death_hint", ModKeybinds.rollKey()) : name("life", death.state());
+            centered(g, font, life, g.guiWidth() / 2, y + 7, TEXT);
+        } else {
+            int armorWidth = Math.min(46, width / 4);
+            var actor = combat == null ? null : combat.creature(player.getUUID());
+            int armor = actor == null ? TacticalCombat.armorClass(player, sheet) : actor.armor();
+            int barWidth = width - armorWidth - 14;
+            drawProgressBar(g, x + 5, y + 15, barWidth, 4, (double) hp.current() / hp.maximum(), CRIMSON);
+            if (hp.temporary() > 0) {
+                drawProgressBar(g, x + 5, y + 15, barWidth, 2, Math.min(1, hp.temporary() / (double) hp.maximum()), 0xff65d9f0);
+            }
+            clipped(g, font, text(hp.temporary() > 0 ? "campaign.hp_temp" : "campaign.hp", hp.current(), hp.maximum(),
+                    hp.temporary()), x + 6, y + 5, barWidth, TEXT);
+            centered(g, font, text("campaign.ac", armor), x + width - armorWidth / 2 - 3, y + 7, GOLD);
+        }
+        if (player.isEyeInFluid(net.minecraft.tags.FluidTags.WATER) || player.getAirSupply() < player.getMaxAirSupply()) {
+            int bubbles = (int) Math.ceil(10.0 * player.getAirSupply() / player.getMaxAirSupply());
+            for (int i = 0; i < 10; i++) {
+                int bx = x + width - 59 + i * 5;
+                g.fill(bx, y + 24, bx + 3, y + 26, i < bubbles ? 0xff74dbfb : BORDER);
+            }
+        }
+        var badges = new ArrayList<Component>();
+        if (ClientDndState.concentration(player.getUUID()) != null) badges.add(text("campaign.focus"));
+        if ((flags & 1) != 0) badges.add(text("campaign.rage"));
+        if (ClientCampaign.companion(EchoAvatarEntity.class) != null) badges.add(text("campaign.echo"));
+        if (ClientCampaign.companion(EldritchCannonEntity.class) != null) {
+            var label = text("campaign.fire_hint", ModKeybinds.fireCannonKey());
+            var control = cannonControl(g.guiWidth(), g.guiHeight(), font);
+            if (control != null) {
+                boolean usable = !ClientDndState.controlsCombatant()
+                        || combat != null && combat.ownsTurn() && combat.resources().contains(Resource.BONUS_ACTION);
+                panel(g, control.x(), control.y(), control.width(), 14, usable ? GOLD : BORDER);
+                clipped(g, font, label, control.x() + 4, control.y() + 3, control.width() - 7, usable ? GOLD : MUTED);
+            } else badges.add(label);
+        }
+        int chaos = sheet.remaining(ClassFeature.CHAOS_POINTS);
+        if (sheet.classLevels().containsKey(net.dnd5ecraft.rules.character.ClassType.HARLEQUIN)) {
+            badges.add(text("campaign.chaos", chaos == 0 ? "◇" : "◆".repeat(Math.min(7, chaos))));
+        }
+        int badgeY = ClientCampaign.companion(EldritchCannonEntity.class) == null ? y : y - 16;
+        for (var badge : badges) {
+            int left = x + width + 6;
+            if (left + 70 > g.guiWidth()) break;
+            int badgeWidth = Math.min(g.guiWidth() - left - 4, font.width(badge) + 9);
+            panel(g, left, badgeY, badgeWidth, 14, ARCANE);
+            clipped(g, font, badge, left + 4, badgeY + 3, badgeWidth - 7, GOLD);
+            badgeY -= 16;
+        }
+    }
+
+    public record CannonControl(int x, int y, int width) {}
+    public static CannonControl cannonControl(int width, int height, Font font) {
+        int left = (width + Math.min(210, width - 14)) / 2 + 6;
+        if (left + 55 > width) return null;
+        int labelWidth = font.width(text("campaign.fire_hint", ModKeybinds.fireCannonKey())) + 9;
+        return new CannonControl(left, height - 49, Math.min(width - left - 4, labelWidth));
     }
 
     public static void initiative(GuiGraphics g, Font font, Combat combat, int left, int y, int width,

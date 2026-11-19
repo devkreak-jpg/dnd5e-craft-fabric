@@ -38,6 +38,10 @@ public final class SpellSlotTable {
                     full += level;
                     if (level > 0) spellcastingClasses++;
                 }
+                case ARTIFICER -> {
+                    full += (level + 1) / 2;
+                    if (level > 0) spellcastingClasses++;
+                }
                 case PALADIN, RANGER -> {
                     if (level >= 2) {
                         half += level / 2;

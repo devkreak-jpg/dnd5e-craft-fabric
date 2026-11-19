@@ -17,6 +17,13 @@ public final class ModEntities {
             Dnd5eCraftMod.id("npc"), FabricEntityTypeBuilder.create(MobCategory.CREATURE, DndNpcEntity::new)
                     .dimensions(EntityDimensions.scalable(.6f, 1.8f)).trackRangeChunks(10).build());
 
+    public static final EntityType<EldritchCannonEntity> ELDRITCH_CANNON = Registry.register(BuiltInRegistries.ENTITY_TYPE,
+            Dnd5eCraftMod.id("eldritch_cannon"), FabricEntityTypeBuilder.create(MobCategory.CREATURE, EldritchCannonEntity::new)
+                    .dimensions(EntityDimensions.scalable(.55f, .55f)).trackRangeChunks(10).build());
+    public static final EntityType<EchoAvatarEntity> ECHO_AVATAR = Registry.register(BuiltInRegistries.ENTITY_TYPE,
+            Dnd5eCraftMod.id("echo_avatar"), FabricEntityTypeBuilder.create(MobCategory.CREATURE, EchoAvatarEntity::new)
+                    .dimensions(EntityDimensions.scalable(.6f, 1.8f)).trackRangeChunks(10).build());
+
     public static final Block TRIGGER_ZONE = Registry.register(BuiltInRegistries.BLOCK,
             Dnd5eCraftMod.id("trigger_zone"), new TriggerZoneBlock(BlockBehaviour.Properties.of()
                     .noCollission().noOcclusion().strength(.2f).noLootTable()));
@@ -29,5 +36,7 @@ public final class ModEntities {
 
     public static void register() {
         FabricDefaultAttributeRegistry.register(DND_NPC, DndNpcEntity.createNpcAttributes());
+        FabricDefaultAttributeRegistry.register(ELDRITCH_CANNON, EldritchCannonEntity.attributes());
+        FabricDefaultAttributeRegistry.register(ECHO_AVATAR, EchoAvatarEntity.attributes());
     }
 }

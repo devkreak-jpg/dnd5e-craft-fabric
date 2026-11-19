@@ -285,6 +285,20 @@ public final class CharacterSheetScreen extends DndScreen {
 
     private void footer() {
         int x = left + 12, w = innerWidth();
+        if (tab == Tab.ACTIONS && presented != null) {
+            pill(text("campaign.actions"), x + w - Math.min(125, w / 3), top + 7, Math.min(125, w / 3), 16,
+                    false, () -> minecraft.setScreen(new CampaignActionsScreen(this)));
+        } else if ((tab == Tab.OVERVIEW || tab == Tab.SKILLS) && presented != null
+                && presented.race() == net.dnd5ecraft.rules.character.RaceType.LOXODON) {
+            int toggleWidth = Math.min(126, w / 3);
+            var smell = pill(text("campaign.keen_smell"), x + w - toggleWidth, top + 7, toggleWidth, 16, ClientDndState.smell(),
+                    () -> { ClientDndState.smell(!ClientDndState.smell()); rebuild(); });
+            smell.setTooltip(Tooltip.create(text("campaign.keen_smell_hint")));
+        } else if (tab == Tab.INVENTORY && minecraft.player instanceof net.dnd5ecraft.server.PlayerCharacter character) {
+            int toggleWidth = Math.min(175, w / 2);
+            pill(text("campaign.cosmetics"), x + w - toggleWidth, top + 7, toggleWidth, 16,
+                    character.dnd5e$showsCosmetics(), () -> ClientPacketHandlers.send(Action.CAMPAIGN_COSMETICS));
+        }
         int dieWidth = (w - 24) / 7;
         for (int i = 0; i < TabletopRolls.DICE.size(); i++) {
             int sides = TabletopRolls.DICE.get(i);

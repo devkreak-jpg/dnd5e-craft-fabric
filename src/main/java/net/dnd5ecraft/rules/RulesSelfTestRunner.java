@@ -17,6 +17,11 @@ import net.dnd5ecraft.combat.EncounterDifficultyCalculator;
 import net.dnd5ecraft.combat.GridMovementTracker.Cell;
 import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.entity.BestiaryRegistry5e;
+import net.dnd5ecraft.entity.CrowdTheme;
+import net.dnd5ecraft.entity.NpcBehaviorMode;
+import net.dnd5ecraft.rules.campaign.CampaignHero;
+import net.dnd5ecraft.rules.campaign.CampaignRules;
+import net.dnd5ecraft.rules.spells.SpellRegistry5e;
 import net.dnd5ecraft.network.CombatHudView;
 import net.dnd5ecraft.network.PlayerSessionStore;
 import net.dnd5ecraft.network.Protocol;
@@ -68,7 +73,47 @@ public final class RulesSelfTestRunner {
         runner.difficulty();
         runner.hardening();
         runner.tabletop();
+        runner.campaign();
         System.out.printf("%d assertions passed%n", runner.checks);
+    }
+
+    private void campaign() {
+        var finneas = CampaignHero.FINNEAS;
+        check("Finneas classes", Map.of(ClassType.ARTIFICER, 3, ClassType.WIZARD, 1), finneas.levels());
+        check("Finneas scores", List.of(11, 12, 15, 15, 10, 12), finneas.scores());
+        check("Finneas vitality", List.of(30, 18), List.of(finneas.hp(), finneas.armor()));
+        check("Finneas spells", 14, finneas.spells().size());
+        for (var spell : finneas.spells()) check("campaign spell " + spell, true, SpellRegistry5e.find(spell).isPresent());
+        check("Triton swim speed", 40, finneas.race().swimmingFeet());
+        check("Triton darkvision", 60, finneas.race().darkvisionFeet());
+        check("Cannon health", 15, CampaignRules.cannonHealth(3));
+        var alexander = CampaignHero.ALEXANDER;
+        check("Alexander vitality", List.of(50, 18), List.of(alexander.hp(), alexander.armor()));
+        check("Level 4 fist", 6, CampaignRules.worldbreakerDie(4));
+        check("Burying Hands save", 15, CampaignRules.saveDc(2, 5));
+        check("Chaos limit", 6, CampaignRules.chaosLimit(4));
+        check("Helpful to ally", -1, CampaignRules.chaosChange(true, true, true));
+        check("Helpful to enemy", 1, CampaignRules.chaosChange(false, true, true));
+        check("No gain when target saves", 0, CampaignRules.chaosChange(true, false, false));
+        check("Minotaur vitality", List.of(40, 17), List.of(CampaignHero.MINOTAUR.hp(), CampaignHero.MINOTAUR.armor()));
+        check("Echo swap", 15, CampaignRules.echoSwapCostFeet());
+        check("Echo in radius", true, CampaignRules.echoInRange(6));
+        check("Echo out of radius", false, CampaignRules.echoInRange(6.01));
+        check("Weapons", 37, Weapon.values().length);
+        for (var weapon : Weapon.values()) check("Weapon " + weapon, weapon != Weapon.NET, weapon.stats().damageType().isPresent());
+        check("30 ft speed", 1.0, CampaignRules.walkMultiplier(30, false, ExhaustionLevel.NONE, false));
+        check("25 ft speed", .85, CampaignRules.walkMultiplier(25, false, ExhaustionLevel.NONE, false));
+        check("40 ft speed", 4.0 / 3, CampaignRules.walkMultiplier(40, false, ExhaustionLevel.NONE, false));
+        check("Exhaustion halves speed", .5, CampaignRules.walkMultiplier(30, false, ExhaustionLevel.TWO, false));
+        check("Exhaustion stops movement", 0.0, CampaignRules.walkMultiplier(30, false, ExhaustionLevel.FIVE, false));
+        check("Five feet per block", 6.0, finneas.race().walkingBlocks());
+        for (var behavior : NpcBehaviorMode.values()) check("Behavior " + behavior, behavior, NpcBehaviorMode.saved(behavior.name()));
+        var random = new java.util.Random(17);
+        for (var theme : CrowdTheme.values()) {
+            var visitor = theme.random(random);
+            check("Crowd scale " + theme, true, visitor.scale() >= .75 && visitor.scale() <= 1.15);
+            check("Crowd radius " + theme, true, visitor.radius() >= 4 && visitor.radius() <= 16);
+        }
     }
 
     private void abilities() {

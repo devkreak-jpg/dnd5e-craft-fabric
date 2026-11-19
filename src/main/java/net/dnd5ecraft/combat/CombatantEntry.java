@@ -37,13 +37,18 @@ public final class CombatantEntry {
     public enum Trait { HUMANOID, UNDEAD, CONSTRUCT, METAL_ARMOR, INORGANIC, MAGICAL, CAN_UNCANNY_DODGE, FIEND, SHAPECHANGER, DEVILS_SIGHT }
 
     public record Attack(String name, int attackBonus, int reachFeet, int normalRangeFeet, int longRangeFeet,
-                         List<DamageRoll> damage, boolean finesse, boolean light, boolean heavy, boolean strengthBased) {
+                         List<DamageRoll> damage, boolean finesse, boolean light, boolean heavy, boolean strengthBased, String weaponKey) {
         public Attack {
             damage = List.copyOf(damage);
             if (name.isBlank() || damage.isEmpty() || reachFeet < 0 || normalRangeFeet < 0
                     || longRangeFeet < normalRangeFeet || (reachFeet == 0) == (normalRangeFeet == 0)) {
                 throw new IllegalArgumentException("An attack needs exactly one valid melee or ranged profile");
             }
+        }
+
+        public Attack(String name, int attackBonus, int reachFeet, int normalRangeFeet, int longRangeFeet,
+                      List<DamageRoll> damage, boolean finesse, boolean light, boolean heavy, boolean strengthBased) {
+            this(name, attackBonus, reachFeet, normalRangeFeet, longRangeFeet, damage, finesse, light, heavy, strengthBased, "");
         }
 
         public Attack(String name, int attackBonus, int reachFeet, int normalRangeFeet, int longRangeFeet,
@@ -98,11 +103,16 @@ public final class CombatantEntry {
     enum Effect {
         BLESS, BANE, ARMOR, SHIELD, DETECT_MAGIC, RESISTANCE, PARALYZED, GHOUL_PARALYSIS, BLINDED, DEAFENED,
         NO_HEALING, SLOWED, NO_REACTIONS, GUIDING_LIGHT, CHILLED_UNDEAD, FALSE_LIFE,
-        GUIDANCE, MOCKED, REVEALED, MARKED, HASTE, LETHARGY, WEBBED, RAGING, SPIRITUAL_WEAPON
+        GUIDANCE, MOCKED, REVEALED, MARKED, HASTE, LETHARGY, WEBBED, RAGING, SPIRITUAL_WEAPON, NETTED, BOOMING, ABSORBED
     }
 
     record TimedEffect(Effect effect, UUID caster, long castId, UUID expiryActor, long expiryTurn,
                        boolean atStart, int saveDc, DamageType5e resistance) {}
+
+    public int campaignFlags() {
+        return (has(Effect.RAGING) ? 1 : 0) | (campaignFist && turn.canSpend(TurnEconomy.Resource.BONUS_ACTION) ? 2 : 0)
+                | (campaignFist && !campaignFury ? 4 : 0) | (campaignLastHit != null ? 8 : 0);
+    }
 
     public record View(UUID id, String name, int team, int initiative, Cell cell, HitPoints hitPoints,
                        DeathSaveTracker deathSaves, Set<ConditionType> conditions, TurnEconomy.Snapshot resources) {
@@ -114,6 +124,10 @@ public final class CombatantEntry {
     private final int team;
     private final int initiative;
     private final Stats stats;
+    UUID campaignLastHit;
+    boolean campaignFist, campaignFury, reckless, campaignDash, echoMoved;
+    int laughterRound;
+    int chaosShift;
     private final Defenses defenses;
     private final ExhaustionLevel exhaustion;
     private final BestiaryTurnState bestiary;
@@ -136,6 +150,7 @@ public final class CombatantEntry {
     Set<SubclassType> subclasses = Set.of();
     boolean hasteAction;
     boolean tookAttackAction;
+    boolean unleashedThisAction;
     int stealth = -1;
     int inspirationDie;
     boolean guardiansSlow;
@@ -243,7 +258,7 @@ public final class CombatantEntry {
         if (has(Effect.PARALYZED) || has(Effect.GHOUL_PARALYSIS)) active.add(ConditionType.PARALYZED);
         if (has(Effect.BLINDED)) active.add(ConditionType.BLINDED);
         if (has(Effect.DEAFENED)) active.add(ConditionType.DEAFENED);
-        if (has(Effect.WEBBED)) active.add(ConditionType.RESTRAINED);
+        if (has(Effect.WEBBED) || has(Effect.NETTED)) active.add(ConditionType.RESTRAINED);
         if (has(Effect.LETHARGY)) active.add(ConditionType.INCAPACITATED);
         if (hp.current() == 0) active.add(ConditionType.UNCONSCIOUS);
         return new ConditionEffectApplier(active, exhaustion);

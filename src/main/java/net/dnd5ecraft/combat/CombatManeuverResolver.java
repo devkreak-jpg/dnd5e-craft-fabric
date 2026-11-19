@@ -54,7 +54,10 @@ final class CombatManeuverResolver {
     private final IntUnaryOperator roller;
 
     record Hit(CombatantEntry attacker, CombatantEntry defender, int roll, int modifier,
-                       int cover, boolean criticalOnHit, RollMode mode, boolean missile) {
+                       int cover, boolean criticalOnHit, RollMode mode, boolean missile, int first, DamageType5e element) {
+        Hit withElement(DamageType5e element) {
+            return new Hit(attacker, defender, roll, modifier, cover, criticalOnHit, mode, missile, first, element);
+        }
         AttackOutcome outcome() {
             return DamagePipeline.attackOutcome(roll, modifier, defender.armorClass() + cover, criticalOnHit);
         }
@@ -204,7 +207,7 @@ final class CombatManeuverResolver {
                 int dc = 8 + user.stats().proficiencyBonus() + user.stats().abilityModifier(cleric >= 2 ? Ability.WISDOM : Ability.CHARISMA);
                 for (CombatantEntry enemy : encounter.initiativeOrder()) {
                     if (!enemy.dead() && enemy.team() != user.team() && enemy.cell().distanceFeet(user.cell()) <= 30
-                            && enemy.stats().traits().contains(Trait.UNDEAD) && !manager.save(enemy, Ability.WISDOM, dc, 0, false, true)) {
+                            && enemy.stats().traits().contains(Trait.UNDEAD) && !manager.saveAgainstFear(enemy, dc)) {
                         manager.applyCondition(enemy.id(), new ConditionInstance(ConditionType.FRIGHTENED, Optional.of(user.id()), 10));
                         enemy.effects.add(new TimedEffect(Effect.NO_REACTIONS, user.id(), manager.nextEffectId(),
                                 enemy.id(), enemy.turns + 10, true, 0, null));
@@ -228,7 +231,8 @@ final class CombatManeuverResolver {
                 var web = user.effects.stream().filter(e -> e.effect() == Effect.WEBBED).findFirst()
                         .orElseThrow(() -> new IllegalStateException("No restraining web"));
                 spend(user, Resource.ACTION);
-                if (abilityTotal(user, Skill.ATHLETICS) >= web.saveDc()) user.effects.remove(web);
+                if ((web.effect() == Effect.NETTED ? manager.d20(user, RollMode.NORMAL) + user.stats().abilityModifier(Ability.STRENGTH)
+                        : abilityTotal(user, Skill.ATHLETICS)) >= web.saveDc()) user.effects.remove(web);
             }
             case QUICKEN_SPELL -> {
                 if (user.quickenNextSpell) user.quickenNextSpell = false;
@@ -291,6 +295,7 @@ final class CombatManeuverResolver {
                 attacker.hasteAction = false;
                 attacker.attacksRemaining = 1;
             } else throw new IllegalStateException("Action already spent");
+            attacker.unleashedThisAction = false;
         }
         attacker.attacksRemaining--;
         attacker.tookAttackAction = true;
@@ -304,11 +309,23 @@ final class CombatManeuverResolver {
         int distance = attacker.cell().distanceFeet(defender.cell());
         manager.validateHostileTarget(attacker, defender);
         if (!attack.inRange(distance) || manager.cover(attacker, defender).blocksTargeting()) {
-            throw new IllegalArgumentException("Target is out of range or behind total cover");
+            var echo = attack.melee() ? manager.echoCell(attacker) : null;
+            if (echo == null) throw new IllegalArgumentException("Target is out of range or behind total cover");
+            attackFrom(attacker, defender, attack, echo, true, nowMillis);
+            return manager.reactionWindow();
         }
+        if (!manager.canUseWeapon(attacker, attack)) throw new IllegalStateException("This weapon is broken or unequipped");
         spendAttack(attacker);
         strike(attacker, defender, attack, true, nowMillis, ignored -> {});
         return manager.reactionWindow();
+    }
+
+    void attackFrom(CombatantEntry attacker, CombatantEntry defender, Attack attack, Cell origin, boolean spend, long time) {
+        manager.validateHostileTarget(attacker, defender);
+        if (!attack.inRange(origin.distanceFeet(defender.cell())) || manager.coverFrom(origin, defender).blocksTargeting()
+                || !manager.canUseWeapon(attacker, attack)) throw new IllegalArgumentException("Echo attack is blocked");
+        if (spend) spendAttack(attacker);
+        strikeFrom(attacker, defender, attack, origin, true, time, ignored -> {}, false, 0, false, () -> {});
     }
 
     void strike(CombatantEntry attacker, CombatantEntry defender, Attack attack, boolean prompt,
@@ -323,20 +340,60 @@ final class CombatManeuverResolver {
 
     void strike(CombatantEntry attacker, CombatantEntry defender, Attack attack, boolean prompt,
             long nowMillis, LongConsumer after, boolean power, int smiteSlot, boolean opportunity) {
+        strike(attacker, defender, attack, prompt, nowMillis, after, power, smiteSlot, opportunity, () -> {});
+    }
+
+    void strike(CombatantEntry attacker, CombatantEntry defender, Attack attack, boolean prompt,
+            long nowMillis, LongConsumer after, boolean power, int smiteSlot, boolean opportunity, Runnable onHit) {
+        strikeFrom(attacker, defender, attack, attacker.cell(), prompt, nowMillis, after, power, smiteSlot, opportunity, onHit);
+    }
+
+    void strikeFrom(CombatantEntry attacker, CombatantEntry defender, Attack attack, Cell origin, boolean prompt,
+            long nowMillis, LongConsumer after, boolean power, int smiteSlot, boolean opportunity, Runnable onHit) {
+        if (!manager.canUseWeapon(attacker, attack)) {
+            after.accept(nowMillis);
+            return;
+        }
         if (attack.melee() && attacker.feat(FeatType.MOBILE)) attacker.threatenedByMobile.add(defender.id());
-        int distance = attacker.cell().distanceFeet(defender.cell());
-        boolean packAdvantage = attacker.bestiary().filter(state -> state.has(Feature.PACK_TACTICS)).isPresent()
-                && encounter.initiativeOrder().stream().anyMatch(ally -> ally != attacker && ally.team() == attacker.team()
-                    && ally.canAct() && ally.cell().distanceFeet(defender.cell()) <= 5);
         boolean ignoreCover = !attack.melee() && attacker.feat(FeatType.SHARPSHOOTER);
-        Hit base = rollAttack(attacker, defender, attack.attackBonus() - (power ? 5 : 0), !attack.melee(), packAdvantage,
-                !attack.melee() && !ignoreCover && distance > attack.normalRangeFeet());
+        int distance = origin.distanceFeet(defender.cell());
+        Cell real = attacker.cell;
+        Hit base;
+        try {
+            attacker.cell = origin;
+            boolean packAdvantage = attacker.bestiary().filter(state -> state.has(Feature.PACK_TACTICS)).isPresent()
+                    && encounter.initiativeOrder().stream().anyMatch(ally -> ally != attacker && ally.team() == attacker.team()
+                        && ally.canAct() && ally.cell().distanceFeet(defender.cell()) <= 5);
+            base = rollAttack(attacker, defender, attack.attackBonus() - (power ? 5 : 0), !attack.melee(),
+                    packAdvantage || attack.melee() && attack.strengthBased() && attacker.reckless || defender.reckless,
+                    !attack.melee() && !ignoreCover && distance > attack.normalRangeFeet());
+        } finally {
+            attacker.cell = real;
+        }
+        if (!origin.equals(real)) manager.echoSwing(attacker);
         Hit hit = new Hit(attacker, defender, base.roll(), base.modifier(), ignoreCover ? 0 : base.cover(),
-                base.criticalOnHit(), base.mode(), !attack.melee());
+                base.criticalOnHit(), base.mode(), !attack.melee(), base.first(), attack.damage().stream()
+                        .map(DamageRoll::type).filter(CombatSpellZoneResolver::absorbable).findFirst().orElse(null));
         resolveHit(hit, prompt, nowMillis, (outcome, dodge, reduction) -> {
             if (outcome != AttackOutcome.MISS) {
+                onHit.run();
+                if (attack.weaponKey().equals("dnd-5e-craft:net")) {
+                    if (manager.nettable(defender)) defender.effects.add(new CombatantEntry.TimedEffect(Effect.NETTED,
+                            attacker.id(), manager.nextEffectId(), defender.id(), Long.MAX_VALUE, true, 10, null));
+                    return;
+                }
+                if (attack.melee()) attacker.campaignLastHit = defender.id();
+                attacker.campaignFist = attack.weaponKey().equals("fist");
+                manager.weaponHit(attacker, defender, attack);
                 List<DamageRoll> rolls = new ArrayList<>(withSneakAttack(attacker, defender, attack, hit.mode()));
                 DamageType5e weaponType = attack.damage().get(0).type();
+                if (attack.melee()) {
+                    var absorbed = attacker.effects.stream().filter(effect -> effect.effect() == Effect.ABSORBED).findFirst();
+                    absorbed.ifPresent(charge -> {
+                        rolls.add(new DamageRoll(charge.resistance(), new Dice(1, 6), 0));
+                        attacker.effects.remove(charge);
+                    });
+                }
                 if (power) rolls.add(new DamageRoll(weaponType, new Dice(0, 0), 10));
                 if (attacker.has(Effect.RAGING) && attack.melee() && attack.strengthBased()) {
                     int barbarian = attacker.stats().classes().getOrDefault(ClassType.BARBARIAN, 0);
@@ -448,20 +505,31 @@ final class CombatManeuverResolver {
                         || (ranged && adjacentHostile(attacker))
                         || (attacker.stats().traits().contains(Trait.UNDEAD) && attacker.effects.stream()
                             .anyMatch(effect -> effect.effect() == Effect.CHILLED_UNDEAD && effect.caster().equals(defender.id()))));
-        int roll = manager.d20(attacker, flags.mode());
+        var roll = manager.rolledD20(attacker, flags.mode());
         attacker.stealth = -1;
         helper.ifPresent(manager.spells()::consumeAid);
         if (mocked) attacker.effects.removeIf(effect -> effect.effect() == Effect.MOCKED);
         if (guiding) defender.effects.removeIf(effect -> effect.effect() == Effect.GUIDING_LIGHT);
-        return new Hit(attacker, defender, roll, bonus + manager.luck(attacker), manager.cover(attacker, defender).bonus(),
-                flags.criticalOnHit(), flags.mode(), false);
+        return new Hit(attacker, defender, roll.kept(), bonus + manager.luck(attacker), manager.cover(attacker, defender).bonus(),
+                flags.criticalOnHit(), roll.mode(), false, roll.dice().get(0), null);
     }
 
     void resolveHit(Hit hit, boolean prompt, long nowMillis, HitResolution effect, LongConsumer after) {
+        if (prompt) {
+            manager.campaign().editRoll(hit.attacker, hit.roll, hit.first, hit.mode, nowMillis, (edited, moment) ->
+                    resolveDefenses(new Hit(hit.attacker, hit.defender, edited.natural(), hit.modifier + edited.adjustment(),
+                            hit.cover, hit.criticalOnHit, edited.mode(), hit.missile, hit.first, hit.element), true, moment, effect, after));
+        } else resolveDefenses(hit, false, nowMillis, effect, after);
+    }
+
+    private void resolveDefenses(Hit hit, boolean prompt, long nowMillis, HitResolution effect, LongConsumer after) {
         AttackOutcome outcome = hit.outcome();
         List<Offer> offers = new ArrayList<>();
         if (prompt && outcome != AttackOutcome.MISS && hit.defender.canReact()) {
             if (manager.spells().hasReactionSlot(hit.defender, "shield")) offers.add(new Offer(hit.defender.id(), Kind.SHIELD));
+            if (CombatSpellZoneResolver.absorbable(hit.element) && manager.spells().hasReactionSlot(hit.defender, "absorb_elements")) {
+                offers.add(new Offer(hit.defender.id(), Kind.ABSORB_ELEMENTS));
+            }
             if (canDodge(hit)) offers.add(new Offer(hit.defender.id(), Kind.UNCANNY_DODGE));
         }
         if (prompt && outcome != AttackOutcome.MISS && hit.missile && hit.defender.canReact()
@@ -479,6 +547,7 @@ final class CombatManeuverResolver {
             var reactor = encounter.require(response.reactor());
             return switch (response.reaction().kind()) {
                 case SHIELD -> manager.spells().canPayReaction(hit.defender, "shield", response.reaction());
+                case ABSORB_ELEMENTS -> manager.spells().canPayReaction(hit.defender, "absorb_elements", response.reaction());
                 case UNCANNY_DODGE -> response.reaction().slot() == 0 && canDodge(hit);
                 case CUTTING_WORDS -> response.reaction().slot() == 0 && reactor.canReact()
                         && reactor.remaining(ClassFeature.BARDIC_INSPIRATION) > 0;
@@ -489,6 +558,7 @@ final class CombatManeuverResolver {
             var reactor = encounter.require(response.reactor());
             switch (response.reaction().kind()) {
                 case SHIELD -> manager.spells().shield(hit.defender, response.reaction());
+                case ABSORB_ELEMENTS -> manager.spells().absorb(hit.defender, response.reaction(), hit.element);
                 case UNCANNY_DODGE -> {
                     spend(reactor, Resource.REACTION);
                     dodge[0] = true;

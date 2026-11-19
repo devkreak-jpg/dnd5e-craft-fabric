@@ -14,7 +14,9 @@ public final class PacketPolicy {
         ZONE_INSPECT(true, false), ZONE_SAVE(true, false),
         REQUEST_ROLL(false, false), REST(false, false), MANEUVER(false, true), PARTY(true, false),
         TABLETOP_ROLL(false, false), DM_ROLL_REQUEST(true, false), DM_ROLL_ANSWER(false, false),
-        TABLETOP_CHOOSE(false, false), TABLETOP_REST(false, false);
+        TABLETOP_CHOOSE(false, false), TABLETOP_REST(false, false),
+        CAMPAIGN_PRESET(false, false), CAMPAIGN_ACTION(false, false), CAMPAIGN_COSMETICS(false, false),
+        DIRECTOR(true, false), CAMPAIGN_SPELL(false, false), CAMPAIGN_POSE(false, false);
 
         private final boolean operator;
         private final boolean turn;

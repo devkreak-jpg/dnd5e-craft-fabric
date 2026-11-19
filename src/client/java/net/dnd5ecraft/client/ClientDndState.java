@@ -41,6 +41,10 @@ public final class ClientDndState {
     private static final List<TabletopResult> results = new ArrayList<>();
     private static RollMode mode = RollMode.NORMAL;
     private static boolean whisper;
+    private static boolean smell;
+
+    public static boolean smell() { return smell; }
+    public static void smell(boolean enabled) { smell = enabled; }
     private static boolean inspiration;
     private static boolean tabletop;
     private static boolean shortRest;
@@ -159,7 +163,7 @@ public final class ClientDndState {
         draft = List.of();
         reactionDeadline = 0;
         mode = RollMode.NORMAL;
-        whisper = inspiration = tabletop = false;
+        whisper = inspiration = tabletop = smell = false;
         results.clear();
         prompt = null;
         clearWorldEffects();

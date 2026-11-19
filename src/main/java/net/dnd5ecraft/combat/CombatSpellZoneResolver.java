@@ -25,6 +25,7 @@ import net.dnd5ecraft.rules.character.ClassFeature;
 import net.dnd5ecraft.rules.character.SubclassType;
 import net.dnd5ecraft.rules.conditions.ConditionEffectApplier.Sense;
 import net.dnd5ecraft.rules.conditions.ConditionType;
+import net.dnd5ecraft.rules.conditions.ConditionInstance;
 import net.dnd5ecraft.rules.conditions.DeathSaveTracker;
 import net.dnd5ecraft.rules.equipment.DamagePipeline.AttackOutcome;
 import net.dnd5ecraft.rules.equipment.DamagePipeline.Dice;
@@ -60,7 +61,7 @@ final class CombatSpellZoneResolver {
 
     private record Aid(UUID target, long expiry) {}
 
-    private record SpellZone(Cast cast, Area area, Map<UUID, Long> lastAffected) {}
+    private record SpellZone(Cast cast, Area area, Map<UUID, Long> lastAffected, long expiryTurn) {}
 
     private record SpiritualWeapon(Cast cast, Cell cell) {}
 
@@ -121,9 +122,13 @@ final class CombatSpellZoneResolver {
 
     void consumeAid(UUID helper) { aids.remove(helper); }
 
+    boolean obscures(Cell cell) {
+        return zones.values().stream().anyMatch(zone -> zone.cast.spell.id().equals("fog_cloud") && area(zone).contains(cell.center()));
+    }
+
     boolean difficultTerrain(Cell cell) {
         return zones.values().stream().anyMatch(zone ->
-                zone.cast.spell.id().equals("web") && area(zone).contains(cell.center()));
+                (zone.cast.spell.id().equals("web") || zone.cast.spell.id().equals("grease")) && area(zone).contains(cell.center()));
     }
 
     Optional<ConcentrationManager.Active> concentration(UUID caster) { return concentration.current(caster); }
@@ -143,15 +148,32 @@ final class CombatSpellZoneResolver {
             throw new IllegalStateException("Spell cannot be cast with the current turn resources");
         }
         if (caster.has(Effect.RAGING)) throw new IllegalStateException("Cannot cast during Rage");
-        Cast cast = prepareCast(caster, spell, request, false);
+        return castPrepared(caster, spell, request, quickened, false, nowMillis);
+    }
+
+    void castTritonFog(UUID actor, Vec3 point, long nowMillis) {
+        manager.requireIdle(nowMillis);
+        var caster = manager.acting(actor);
+        var spell = SpellRegistry5e.require("fog_cloud");
+        if (caster.remaining(ClassFeature.TRITON_FOG) == 0 || !caster.turn.canCast(spell) || caster.has(Effect.RAGING)) {
+            throw new IllegalStateException("Triton Fog Cloud is unavailable");
+        }
+        var request = new CastRequest(spell.id(), 1, Pool.REGULAR, List.of(), Optional.of(point), Optional.empty());
+        castPrepared(caster, spell, request, false, true, nowMillis);
+    }
+
+    private Optional<Window> castPrepared(CombatantEntry caster, Spell spell, CastRequest request, boolean quickened,
+            boolean innate, long time) {
+        Cast cast = prepareCast(caster, spell, request, innate);
         caster.turn.cast(spell, quickened);
         if (quickened) {
             caster.spend(ClassFeature.SORCERY_POINTS, 2);
             caster.quickenNextSpell = false;
         }
-        pay(caster, request);
+        if (innate) caster.spend(ClassFeature.TRITON_FOG, 1);
+        else pay(caster, request);
         beginSpell(cast);
-        return intercept(caster, spell.id(), cast.slot, nowMillis, time -> resolveCast(cast, time), ignored -> {});
+        return intercept(caster, spell.id(), cast.slot, time, moment -> resolveCast(cast, moment), ignored -> {});
     }
 
     private Optional<Window> intercept(CombatantEntry caster, String spellId, int slot, long nowMillis,
@@ -407,6 +429,22 @@ final class CombatSpellZoneResolver {
         payReaction(reactor, "shield", reaction);
         reactor.effects.add(new TimedEffect(Effect.SHIELD, reactor.id(), manager.nextEffectId(), reactor.id(),
                 reactor.turns + 1, true, 0, null));
+        world.spellVisual("shield", reactor, reactor);
+    }
+
+    static boolean absorbable(DamageType5e damage) {
+        return damage == DamageType5e.ACID || damage == DamageType5e.COLD || damage == DamageType5e.FIRE
+                || damage == DamageType5e.LIGHTNING || damage == DamageType5e.THUNDER;
+    }
+
+    void absorb(CombatantEntry reactor, Reaction reaction, DamageType5e element) {
+        payReaction(reactor, "absorb_elements", reaction);
+        reactor.effects.add(new TimedEffect(Effect.RESISTANCE, reactor.id(), manager.nextEffectId(), reactor.id(),
+                reactor.turns + 1, true, 0, element));
+        reactor.effects.removeIf(effect -> effect.effect() == Effect.ABSORBED);
+        reactor.effects.add(new TimedEffect(Effect.ABSORBED, reactor.id(), manager.nextEffectId(), reactor.id(),
+                reactor.turns + 1, false, 0, element));
+        world.spellVisual("absorb_elements", reactor, reactor);
     }
 
     private void resolveCast(Cast cast, long nowMillis) {
@@ -418,7 +456,16 @@ final class CombatSpellZoneResolver {
         cast.caster.stealth = -1;
         if (cast.spell.effect().kind() == EffectKind.ZONE) {
             Area area = zoneArea(cast, cast.areaOrigin.orElse(cast.caster.cell().center()));
-            zones.put(cast.id, new SpellZone(cast, area, new HashMap<>()));
+            zones.put(cast.id, new SpellZone(cast, area, new HashMap<>(), cast.caster.turns + cast.spell.durationRounds()));
+            world.zoneVisual(cast.spell.id(), area);
+            if (cast.spell.id().equals("grease")) {
+                for (var target : encounter.initiativeOrder()) if (area.contains(target.cell().center()) && !target.dead()) {
+                    if (!manager.save(target, Ability.DEXTERITY, saveDc(cast), 0, false, false)) {
+                        manager.applyCondition(target.id(), new ConditionInstance(ConditionType.PRONE, Optional.of(cast.caster.id()),
+                                ConditionInstance.INDEFINITE));
+                    }
+                }
+            }
             refreshGuardians();
         } else if (cast.spell.effect().kind() == EffectKind.SPIRITUAL_WEAPON) {
             var target = cast.targets.get(0);
@@ -427,16 +474,51 @@ final class CombatSpellZoneResolver {
             resolveSpellAttack(cast, 0, nowMillis);
         } else if (cast.spell.id().equals("magic_missile")) {
             magicMissile(cast, nowMillis);
+        } else if (cast.spell.id().equals("booming_blade")) {
+            var target = cast.targets.get(0);
+            var attack = cast.caster.stats().attacks().stream().filter(CombatantEntry.Attack::melee).findFirst()
+                    .orElseThrow(() -> new IllegalStateException("Booming Blade needs a melee weapon"));
+            manager.maneuvers().strike(cast.caster, target, attack, true, nowMillis, ignored -> {}, false, 0, false,
+                    () -> addEffect(cast, target, Effect.BOOMING, cast.caster, true, 0, DamageType5e.THUNDER));
         } else if (cast.spell.resolution() == Resolution.ATTACK) {
             resolveSpellAttack(cast, 0, nowMillis);
         } else {
-            int amount = rollSpellAmount(cast, false);
-            for (CombatantEntry target : cast.targets) {
-                boolean saved = cast.spell.save().map(ability -> spellSave(cast, target, ability)).orElse(false);
-                if (!saved || cast.spell.resolution() == Resolution.SAVE_HALF) {
-                    applySpell(cast, target, saved ? amount / 2 : amount, saved, false, false);
-                }
+            resolveSaveTargets(cast, 0, rollSpellAmount(cast, false), nowMillis);
+        }
+    }
+
+    private void resolveSaveTargets(Cast cast, int index, int amount, long time) {
+        for (int i = index; i < cast.targets.size(); i++) {
+            var target = cast.targets.get(i);
+            if (target.dead() && cast.spell.effect().kind() != EffectKind.REVIVE) continue;
+            var ability = cast.spell.save().orElse(null);
+            var element = cast.spell.effect().damageType().orElse(null);
+            if (ability == null && (!absorbable(element) || !hasReactionSlot(target, "absorb_elements"))) {
+                applySpell(cast, target, amount, false, false, false);
+                continue;
             }
+            int next = i + 1;
+            java.util.function.BiConsumer<Boolean, Long> finish = (saved, moment) -> {
+                if (saved && cast.spell.resolution() != Resolution.SAVE_HALF) {
+                    resolveSaveTargets(cast, next, amount, moment);
+                    return;
+                }
+                int damage = saved ? amount / 2 : amount;
+                List<Offer> offers = encounter.active() && damage > 0 && absorbable(element) && hasReactionSlot(target, "absorb_elements")
+                        ? List.of(new Offer(target.id(), Kind.ABSORB_ELEMENTS)) : List.of();
+                manager.open(offers, moment, response -> canPayReaction(target, "absorb_elements", response.reaction()),
+                        response -> absorb(target, response.reaction(), element), resume -> {
+                            applySpell(cast, target, damage, saved, false, false);
+                            resolveSaveTargets(cast, next, amount, resume);
+                        });
+            };
+            if (ability == null) finish.accept(false, time);
+            else {
+                boolean serenity = Set.of("charm_person", "charm_monster", "fear", "cause_fear").contains(cast.spell.id());
+                manager.campaignSpellSave(target, ability, saveDc(cast), spellSaveBonus(cast, target, ability),
+                        cast.spell.id().equals("shatter") && target.stats().traits().contains(Trait.INORGANIC), serenity, time, finish);
+            }
+            return;
         }
     }
 
@@ -465,7 +547,7 @@ final class CombatSpellZoneResolver {
         boolean metalAdvantage = cast.spell.id().equals("shocking_grasp") && target.stats().traits().contains(Trait.METAL_ARMOR);
         Hit hit = manager.maneuvers().rollAttack(cast.caster, target, cast.caster.stats().proficiencyBonus() + castingModifier(cast),
                 cast.spell.rangeFeet() > 5, metalAdvantage, false);
-        manager.maneuvers().resolveHit(hit, encounter.active(), nowMillis, (outcome, dodge, reduction) -> {
+        manager.maneuvers().resolveHit(hit.withElement(cast.spell.effect().damageType().orElse(null)), encounter.active(), nowMillis, (outcome, dodge, reduction) -> {
             if (outcome != AttackOutcome.MISS) {
                 boolean critical = outcome == AttackOutcome.CRITICAL;
                 applySpell(cast, target, Math.max(0, rollSpellAmount(cast, critical) - reduction), false, critical, dodge);
@@ -490,15 +572,19 @@ final class CombatSpellZoneResolver {
     private int saveDc(Cast cast) { return 8 + cast.caster.stats().proficiencyBonus() + castingModifier(cast); }
 
     private boolean spellSave(Cast cast, CombatantEntry target, Ability ability) {
-        int bonus = ability == Ability.DEXTERITY && cast.spell.effect().rider() != Spell.Rider.NO_COVER_BONUS
+        boolean disadvantage = cast.spell.id().equals("shatter") && target.stats().traits().contains(Trait.INORGANIC);
+        return manager.save(target, ability, saveDc(cast), spellSaveBonus(cast, target, ability), disadvantage, true);
+    }
+
+    private int spellSaveBonus(Cast cast, CombatantEntry target, Ability ability) {
+        return ability == Ability.DEXTERITY && cast.spell.effect().rider() != Spell.Rider.NO_COVER_BONUS
                 ? CoverRaycaster.cover(cast.areaOrigin.orElseGet(() -> CombatManager.eye(cast.caster)), target.bounds(),
                     world::blocksCover).bonus() : 0;
-        boolean disadvantage = cast.spell.id().equals("shatter") && target.stats().traits().contains(Trait.INORGANIC);
-        return manager.save(target, ability, saveDc(cast), bonus, disadvantage, true);
     }
 
     private void applySpell(Cast cast, CombatantEntry target, int amount, boolean saved, boolean critical, boolean dodge) {
         if (target.dead() && cast.spell.effect().kind() != EffectKind.REVIVE) return;
+        world.spellVisual(cast.spell.id(), cast.caster, target);
         switch (cast.spell.effect().kind()) {
             case DAMAGE, SPIRITUAL_WEAPON -> {
                 manager.dealDamage(cast.caster, target, Map.of(cast.spell.effect().damageType().orElseThrow(), amount), critical, dodge);
@@ -546,7 +632,8 @@ final class CombatSpellZoneResolver {
             case ZONE -> throw new IllegalStateException("Persistent areas resolve on entry and turn start");
             case RESISTANCE -> addEffect(cast, target, Effect.RESISTANCE, cast.caster, true, 0,
                     DamageType5e.valueOf(cast.choice.orElseThrow()));
-            case ARMOR_BONUS, COUNTERSPELL -> throw new IllegalStateException("Reaction spell requires its trigger");
+            case UTILITY -> throw new IllegalStateException("Use the campaign spell control");
+            case ARMOR_BONUS, COUNTERSPELL, ABSORB -> throw new IllegalStateException("Reaction spell requires its trigger");
         }
     }
 
@@ -562,6 +649,8 @@ final class CombatSpellZoneResolver {
             case NO_REACTIONS -> addEffect(cast, target, Effect.NO_REACTIONS, target, true, 0, null);
             case GUIDING_LIGHT -> addEffect(cast, target, Effect.GUIDING_LIGHT, cast.caster, false, 0, null);
             case PUSH_TEN_FEET -> manager.push(cast.caster, target, 2);
+            case PULL_TEN_FEET -> manager.pull(cast.caster, target, 2);
+            case BOOM_ON_MOVE -> addEffect(cast, target, Effect.BOOMING, cast.caster, true, 0, DamageType5e.THUNDER);
             case MOCKERY -> addEffect(cast, target, Effect.MOCKED, cast.caster, false, 0, null);
             case NONE, NO_COVER_BONUS -> { }
         }
@@ -588,10 +677,22 @@ final class CombatSpellZoneResolver {
         }
     }
 
+    void boomingMovement(CombatantEntry target) {
+        var effect = target.effects.stream().filter(active -> active.effect() == Effect.BOOMING).findFirst().orElse(null);
+        if (effect == null) return;
+        target.effects.remove(effect);
+        encounter.find(effect.caster()).filter(caster -> !target.dead()).ifPresent(caster -> {
+            manager.dealDamage(caster, target, Map.of(DamageType5e.THUNDER, new Dice(1, 8).roll(false, roller)), false, false);
+            world.spellVisual("booming_blade", caster, target);
+        });
+    }
+
     void triggerZones(CombatantEntry entry, Cell previous) {
         if (entry.dead()) return;
         for (SpellZone zone : List.copyOf(zones.values())) {
-            boolean guardians = zone.cast.spell.id().equals("spirit_guardians");
+            String id = zone.cast.spell.id();
+            if (id.equals("fog_cloud")) continue;
+            boolean guardians = id.equals("spirit_guardians");
             Area area = area(zone);
             if (guardians && zone.cast.caster.team() == entry.team()) continue;
             if (!area.contains(entry.cell().center()) || previous != null && area.contains(previous.center())
@@ -601,6 +702,10 @@ final class CombatSpellZoneResolver {
                 if (!manager.save(entry, Ability.DEXTERITY, saveDc(zone.cast), 0, false, true)
                         && entry.effects.stream().noneMatch(effect -> effect.effect() == Effect.WEBBED && effect.castId() == zone.cast.id)) {
                     addEffect(zone.cast, entry, Effect.WEBBED, zone.cast.caster, true, saveDc(zone.cast), null);
+                }
+            } else if (id.equals("grease")) {
+                if (!manager.save(entry, Ability.DEXTERITY, saveDc(zone.cast), 0, false, false)) {
+                    manager.applyCondition(entry.id(), new ConditionInstance(ConditionType.PRONE, Optional.of(zone.cast.caster.id()), ConditionInstance.INDEFINITE));
                 }
             } else {
                 int damage = rollSpellAmount(zone.cast, false);
@@ -633,7 +738,7 @@ final class CombatSpellZoneResolver {
                 .findFirst().orElseThrow(() -> new IllegalStateException("No moonbeam is active"));
         if (beam.area.origin().minus(destination.center()).length() > 12) throw new IllegalArgumentException("Moonbeam can move up to 60 feet");
         CombatManeuverResolver.spend(caster, Resource.ACTION);
-        zones.put(beam.cast.id, new SpellZone(beam.cast, zoneArea(beam.cast, destination.center()), beam.lastAffected));
+        zones.put(beam.cast.id, new SpellZone(beam.cast, zoneArea(beam.cast, destination.center()), beam.lastAffected, beam.expiryTurn));
     }
 
     void moveSpiritualWeapon(CombatantEntry caster, CombatantEntry target, long time) {
@@ -657,6 +762,7 @@ final class CombatSpellZoneResolver {
     }
 
     void expireEffects(CombatantEntry actor, boolean atStart) {
+        if (atStart) zones.values().removeIf(zone -> !zone.cast.spell.concentration() && zone.cast.caster == actor && actor.turns >= zone.expiryTurn);
         for (CombatantEntry entry : encounter.initiativeOrder()) {
             entry.effects.removeIf(effect -> {
                 if (!effect.expiryActor().equals(actor.id()) || effect.atStart() != atStart

@@ -13,6 +13,8 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.context.UseOnContext;
+import net.dnd5ecraft.server.DmDirector;
 import net.minecraft.world.level.Level;
 
 public final class DmMasterWandItem extends Item {
@@ -36,9 +38,14 @@ public final class DmMasterWandItem extends Item {
 
     @Override
     public InteractionResult interactLivingEntity(ItemStack stack, Player player, LivingEntity target, InteractionHand hand) {
-        if (!(target instanceof DndNpcEntity npc) || !player.isShiftKeyDown()) return InteractionResult.PASS;
+        if (!(target instanceof DndNpcEntity npc)) return InteractionResult.PASS;
         if (player instanceof ServerPlayer serverPlayer) {
-            if (!WandSelections.allowed(serverPlayer) || TacticalCombat.isLocked(npc)) return InteractionResult.FAIL;
+            if (!WandSelections.allowed(serverPlayer)) return InteractionResult.FAIL;
+            if (!player.isShiftKeyDown()) {
+                DmDirector.select(serverPlayer, npc, false);
+                return InteractionResult.CONSUME;
+            }
+            if (TacticalCombat.isLocked(npc)) return InteractionResult.FAIL;
             if (ModPackets.supports(serverPlayer)) {
                 ModPackets.inspectNpc(serverPlayer, npc);
                 return InteractionResult.CONSUME;
@@ -49,5 +56,18 @@ public final class DmMasterWandItem extends Item {
                     "dnd-5e-craft.ui.attitude." + npc.attitude().name().toLowerCase(java.util.Locale.ROOT)));
         }
         return InteractionResult.sidedSuccess(player.level().isClientSide);
+    }
+
+    @Override public InteractionResult useOn(UseOnContext context) {
+        if (!(context.getPlayer() instanceof ServerPlayer player)) return InteractionResult.SUCCESS;
+        if (!WandSelections.allowed(player)) return InteractionResult.FAIL;
+        if (DmDirector.selected(player) == null) return InteractionResult.PASS;
+        try {
+            DmDirector.direct(player, context.getClickedPos().relative(context.getClickedFace()), player.isShiftKeyDown());
+            return InteractionResult.CONSUME;
+        } catch (IllegalArgumentException | IllegalStateException invalid) {
+            player.displayClientMessage(net.minecraft.network.chat.Component.literal(invalid.getMessage()), true);
+            return InteractionResult.FAIL;
+        }
     }
 }

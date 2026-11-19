@@ -95,6 +95,7 @@ public final class ClientActions {
     public static boolean attack() {
         var client = Minecraft.getInstance();
         if (client.player == null) return false;
+        if (ClientCampaign.pick()) return true;
         if (aiming != null) {
             if (aiming.spell.area().isPresent() && (aiming.origin == null || aiming.spell.effect().kind() != Spell.EffectKind.HEAL)) {
                 aiming.origin = aimPoint(aiming.spell);
@@ -121,6 +122,7 @@ public final class ClientActions {
     public static boolean use() {
         var client = Minecraft.getInstance();
         if (client.player == null) return false;
+        if (ClientCampaign.pick()) return true;
         if (aiming != null) {
             if (aiming.spell.area().isPresent() && aiming.origin == null) aiming.origin = aimPoint(aiming.spell);
             boolean targetsRequired = aiming.spell.targeting() == Spell.Targeting.CREATURES || aiming.spell.effect().kind() == Spell.EffectKind.HEAL;
@@ -130,6 +132,30 @@ public final class ClientActions {
                 ClientDndState.notify(text("aim.no_target"));
             } else if (sendSpell(aiming)) cancelAim();
             return true;
+        }
+        if (ClientDndState.controlsCombatant()) {
+            var item = client.player.getMainHandItem();
+            var point = hoveredCell();
+            if (item.is(ModItems.ELDRITCH_CANNON_CONTROLLER)) {
+                if (ClientCampaign.companion(net.dnd5ecraft.entity.EldritchCannonEntity.class) == null) {
+                    ClientCampaign.act(net.dnd5ecraft.server.CampaignActions.Action.CANNON_SUMMON, null, point, 0);
+                } else if (client.player.isShiftKeyDown()) {
+                    ClientCampaign.act(net.dnd5ecraft.server.CampaignActions.Action.CANNON_MODE, null, null, 0);
+                } else net.dnd5ecraft.client.gui.screen.CampaignActionsScreen.fireCannon();
+                return true;
+            }
+            if (item.is(ModItems.ECHO_SIGIL)) {
+                var echo = ClientCampaign.companion(net.dnd5ecraft.entity.EchoAvatarEntity.class);
+                var action = echo == null ? net.dnd5ecraft.server.CampaignActions.Action.ECHO_MANIFEST
+                        : client.player.isShiftKeyDown() ? net.dnd5ecraft.server.CampaignActions.Action.ECHO_SWAP
+                        : net.dnd5ecraft.server.CampaignActions.Action.ECHO_MOVE;
+                ClientCampaign.act(action, null, point, 0);
+                return true;
+            }
+            if (item.is(ModItems.HARLEQUIN_DECK_WAND)) {
+                client.setScreen(new net.dnd5ecraft.client.gui.screen.CampaignActionsScreen(null));
+                return true;
+            }
         }
         var combat = ClientDndState.combat();
         if (!ClientDndState.controlsCombatant() && ClientDndState.state().dm() && client.getCameraEntity() instanceof DndNpcEntity) {
@@ -192,8 +218,8 @@ public final class ClientActions {
                 || kind != null && !combat.reaction().choices().contains(kind)) return;
         Pool chosenPool = Pool.REGULAR;
         int chosenSlot = 0;
-        if (kind == Kind.SHIELD || kind == Kind.COUNTERSPELL) {
-            int min = kind == Kind.SHIELD ? 1 : 3;
+        if (kind == Kind.SHIELD || kind == Kind.COUNTERSPELL || kind == Kind.ABSORB_ELEMENTS) {
+            int min = kind == Kind.COUNTERSPELL ? 3 : 1;
             for (int i = 0; i <= 9 - min; i++) {
                 int level = highest ? 9 - i : min + i;
                 for (Pool pool : Pool.values()) {
@@ -281,7 +307,7 @@ public final class ClientActions {
         return new AoEGeometry.Vec3(point.x, point.y, point.z);
     }
 
-    private static EntityHitResult aimedCreature(double range) {
+    static EntityHitResult aimedCreature(double range) {
         var camera = Minecraft.getInstance().getCameraEntity();
         if (camera == null || range <= 0) return null;
         Vec3 from = camera.getEyePosition(1);

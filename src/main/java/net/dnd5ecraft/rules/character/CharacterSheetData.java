@@ -167,6 +167,12 @@ public record CharacterSheetData(
         return copy(classLevels, experiencePoints, hitPoints, exhaustion, updated);
     }
 
+    public CharacterSheetData withCoins(CoinPurse updated) {
+        return new CharacterSheetData(name, race, background, personality, startingClass, classLevels, subclasses,
+                abilityScores, skillProficiencies, savingThrowProficiencies, feats, experiencePoints, hitPoints, updated,
+                attunement, exhaustion, conditions, deathSaves, resources);
+    }
+
     public CharacterSheetData withRace(RaceType updated) {
         return new CharacterSheetData(name, updated, background, personality, startingClass, classLevels, subclasses,
                 abilityScores, skillProficiencies, savingThrowProficiencies, feats, experiencePoints, hitPoints, coins,
@@ -174,6 +180,10 @@ public record CharacterSheetData(
     }
 
     public int remaining(ClassFeature feature) {
+        if (feature == ClassFeature.UNLEASH_INCARNATION) {
+            if (subclasses.get(ClassType.FIGHTER) != SubclassType.ECHO_KNIGHT) return 0;
+            return Math.max(0, Ability.modifier(score(Ability.CONSTITUTION)) - resources.spent().getOrDefault(feature, 0));
+        }
         return resources.remaining(feature, classLevels, Ability.modifier(score(Ability.CHARISMA)), race);
     }
 
@@ -271,8 +281,28 @@ public record CharacterSheetData(
 
     public CharacterSheetData longRest(boolean consumedFoodAndWater) {
         requireConscious();
-        return copy(classLevels, experiencePoints, new HitPoints(hitPoints.maximum(), hitPoints.maximum(), 0, 0),
+        var rested = copy(classLevels, experiencePoints, new HitPoints(hitPoints.maximum(), hitPoints.maximum(), 0, 0),
                 exhaustion.afterLongRest(consumedFoodAndWater), resources.rested(classLevels, true));
+        int role = resources.spent().getOrDefault(ClassFeature.CAST_OF_DIE, 0);
+        if (role < 32 || role / 32 > Ability.values().length) return rested;
+        return rested.withRoleScore(Ability.values()[role / 32 - 1], role % 32, rested.resources());
+    }
+
+    public CharacterSheetData castOfTheDie(Ability ability) {
+        requireConscious();
+        if (remaining(ClassFeature.CAST_OF_DIE) == 0) throw new IllegalStateException("Cast of the Die is unavailable");
+        int original = score(ability);
+        int role = (ability.ordinal() + 1) * 32 + original;
+        return withRoleScore(ability, Math.min(30, original + 4), resources.withSpent(ClassFeature.CAST_OF_DIE, role));
+    }
+
+    private CharacterSheetData withRoleScore(Ability ability, int score, CharacterResources updated) {
+        var scores = new EnumMap<Ability, Integer>(Ability.class);
+        scores.putAll(abilityScores);
+        scores.put(ability, score);
+        return new CharacterSheetData(name, race, background, personality, startingClass, classLevels, subclasses, scores,
+                skillProficiencies, savingThrowProficiencies, feats, experiencePoints, hitPoints, coins, attunement,
+                exhaustion, conditions, deathSaves, updated);
     }
 
     private void requireConscious() {

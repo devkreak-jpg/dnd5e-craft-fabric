@@ -40,7 +40,10 @@ public final class ClientPacketHandlers {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null || client.level == null || !ClientPlayNetworking.canSend(ModPackets.REQUEST)) return;
             if (client.player != synchronizedPlayer || client.level != synchronizedLevel) {
-                if (client.level != synchronizedLevel) ClientDndState.clearWorldEffects();
+                if (client.level != synchronizedLevel) {
+                    ClientDndState.clearWorldEffects();
+                    ClientCampaign.reset();
+                }
                 synchronizedPlayer = client.player;
                 synchronizedLevel = client.level;
                 send(Action.SYNC);
@@ -55,6 +58,7 @@ public final class ClientPacketHandlers {
         synchronizedPlayer = null;
         synchronizedLevel = null;
         ClientDndState.reset();
+        ClientCampaign.reset();
     }
 
     private static void receive(net.minecraft.resources.ResourceLocation channel, boolean timed) {
@@ -111,8 +115,8 @@ public final class ClientPacketHandlers {
                 yield client -> {
                     ClientDndState.state(snapshot);
                     var combat = snapshot.combat();
-                    if (client.screen != null && combat != null && combat.reaction() != null
-                            && ClientDndState.reactionRemaining() > 0) {
+                    if (combat != null && combat.reaction() != null && ClientDndState.reactionRemaining() > 0
+                            && (client.screen != null || combat.reaction().choices().stream().anyMatch(ClientCampaign::isCampaignReaction))) {
                         if (client.screen instanceof ReactionPromptScreen prompt) {
                             if (!prompt.matches(combat.id(), combat.reaction().id())) {
                                 client.setScreen(new ReactionPromptScreen(prompt.previous(), combat.id(), combat.reaction()));
@@ -229,6 +233,10 @@ public final class ClientPacketHandlers {
                     }
                     ClientDndState.notify(whisper);
                 };
+            }
+            case DIRECTOR_SELECTION -> {
+                var npc = buf.readUUID();
+                yield ignored -> ClientCampaign.directedNpc(npc);
             }
             case DAMAGE -> {
                 int amount = buf.readVarInt();

@@ -16,7 +16,10 @@ public enum SubclassType {
     DRACONIC_BLOODLINE(SORCERER, 1),
     FIEND(WARLOCK, 1),
     EVOCATION(WIZARD, 2),
-    ABJURATION(WIZARD, 2);
+    ABJURATION(WIZARD, 2),
+    ARTILLERIST(ARTIFICER, 3),
+    WORLDBREAKER(BARBARIAN, 3),
+    ECHO_KNIGHT(FIGHTER, 3);
 
     private final ClassType parent;
     private final int selectionLevel;

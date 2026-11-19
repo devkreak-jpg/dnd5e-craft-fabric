@@ -6,7 +6,8 @@
     "EntityScaleMixin",
     "LivingEntityCombatMixin",
     "PlayerCharacterMixin",
-    "PlayerMovementLockMixin"
+    "PlayerMovementLockMixin",
+    "FoodDataMixin"
   ],
   "injectors": {
     "defaultRequire": 1

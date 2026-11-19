@@ -51,6 +51,22 @@ public final class DndCommands {
                     }
                 }))))
                 .then(dmCommands())
+                .then(literal("preset").then(argument("hero", StringArgumentType.word())
+                        .suggests((context, builder) -> net.minecraft.commands.SharedSuggestionProvider.suggest(
+                                java.util.Arrays.stream(net.dnd5ecraft.rules.campaign.CampaignHero.values())
+                                        .map(net.dnd5ecraft.rules.campaign.CampaignHero::id), builder))
+                        .executes(context -> run(context, player -> {
+                            var hero = net.dnd5ecraft.rules.campaign.CampaignHero.valueOf(word(context, "hero"));
+                            CampaignCharacters.install(player, hero, hero.create());
+                        }))))
+                .then(literal("smell").then(argument("skill", StringArgumentType.word()).executes(context -> run(context, player -> {
+                    var skill = Skill.valueOf(word(context, "skill"));
+                    PlayerRules.show(player, PlayerRules.label("skill", skill.name()), PlayerRules.smell(player, skill, 0));
+                }))))
+                .then(literal("message").then(argument("recipient", EntityArgument.player())
+                        .then(argument("text", StringArgumentType.greedyString()).executes(context -> run(context, player ->
+                                CampaignMagic.cast(player, "message", EntityArgument.getPlayer(context, "recipient").getUUID(), null,
+                                        StringArgumentType.getString(context, "text")))))))
                 .then(literal("sheet").executes(context -> run(context, player -> ModPackets.sendSheet(player, true))))
                 .then(literal("create").executes(context -> run(context, player -> {
                     PlayerRules.requireDowntime(player);
@@ -178,6 +194,8 @@ public final class DndCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> dmCommands() {
         return literal("dm").requires(source -> source.hasPermission(2))
+                .then(literal("speak").then(argument("npc", EntityArgument.entity()).executes(context ->
+                        run(context, player -> DmDirector.select(player, npc(context), true)))))
                 .executes(context -> run(context, DndCommands::toggleDm))
                 .then(literal("mode").executes(context -> run(context, DndCommands::toggleDm)))
                 .then(literal("start").executes(context -> run(context, TacticalCombat::startNearby)))

@@ -36,6 +36,7 @@ public final class PlayerSheets {
                 server.getPlayerList().getPlayers().forEach(PlayerSheets::tickDeathSaves));
         ServerPlayerEvents.COPY_FROM.register((previous, current, alive) -> {
             NEXT_DEATH_SAVE.remove(previous);
+            ((PlayerCharacter) current).dnd5e$setCosmetics(((PlayerCharacter) previous).dnd5e$showsCosmetics());
             get(previous).ifPresent(sheet -> {
                 set(current, sheet);
                 current.setHealth(Math.max(1, sheet.hitPoints().current()));
