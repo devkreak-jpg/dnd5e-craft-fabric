@@ -32,6 +32,10 @@ public final class ModItems {
             net.minecraft.world.item.ArmorItem.Type.CHESTPLATE, single()));
     public static final Item SPLINT_ARMOR = item("splint_armor", new net.minecraft.world.item.ArmorItem(net.minecraft.world.item.ArmorMaterials.IRON,
             net.minecraft.world.item.ArmorItem.Type.CHESTPLATE, single()));
+    public static final Item STUDDED_LEATHER_ARMOR = chestplate("studded_leather_armor", net.minecraft.world.item.ArmorMaterials.LEATHER);
+    public static final Item BREASTPLATE = chestplate("breastplate", net.minecraft.world.item.ArmorMaterials.GOLD);
+    public static final Item HALF_PLATE = chestplate("half_plate", net.minecraft.world.item.ArmorMaterials.IRON);
+    public static final Item PLATE_ARMOR = chestplate("plate_armor", net.minecraft.world.item.ArmorMaterials.DIAMOND);
     public static final Item WORLDBREAKER_WRAPS = item("worldbreaker_wraps", new Item(single()));
     public static final Item HARLEQUIN_DECK_WAND = item("harlequin_deck_wand", new CampaignFocusItem(single(), CampaignFocusItem.Focus.CHAOS));
     public static final Item ECHO_SIGIL = item("echo_sigil", new CampaignFocusItem(single(), CampaignFocusItem.Focus.ECHO));
@@ -41,7 +45,7 @@ public final class ModItems {
     private static final List<Item> TOOLS = List.of(DM_MASTER_WAND, NPC_SPAWNER_WAND, DUNGEON_BRUSH, TRIGGER_ZONE_WAND,
             CHARACTER_FOLIO, PHYSICAL_D20, HEALING_DRAUGHT, REPEATING_LIGHT_CROSSBOW, SENTINEL_SHIELD, BAG_OF_HOLDING,
             THIEVES_TOOLS, SCALE_MAIL, SPLINT_ARMOR, WORLDBREAKER_WRAPS, HARLEQUIN_DECK_WAND, ECHO_SIGIL,
-            ELDRITCH_CANNON_CONTROLLER, CROWD_SPAWNER_STAFF);
+            ELDRITCH_CANNON_CONTROLLER, CROWD_SPAWNER_STAFF, STUDDED_LEATHER_ARMOR, BREASTPLATE, HALF_PLATE, PLATE_ARMOR);
 
     private static WeaponStatsRegistry.Stats repeating() {
         var base = Weapon.LIGHT_CROSSBOW.stats();
@@ -70,6 +74,10 @@ public final class ModItems {
     private ModItems() {}
 
     private static Item.Properties single() { return new Item.Properties().stacksTo(1); }
+
+    private static Item chestplate(String name, net.minecraft.world.item.ArmorMaterials material) {
+        return item(name, new net.minecraft.world.item.ArmorItem(material, net.minecraft.world.item.ArmorItem.Type.CHESTPLATE, single()));
+    }
 
     private static Item item(String name, Item item) {
         return Registry.register(BuiltInRegistries.ITEM, Dnd5eCraftMod.id(name), item);

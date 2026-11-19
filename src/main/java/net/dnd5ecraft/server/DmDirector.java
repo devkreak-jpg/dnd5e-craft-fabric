@@ -134,6 +134,7 @@ public final class DmDirector {
                     var old = sheet.coins();
                     PlayerSheets.set(member, sheet.withCoins(new CoinPurse(old.copper(), old.silver(), old.electrum(),
                             Math.addExact(old.gold(), value), old.platinum())));
+                    ModPackets.recordJournal(member, Component.translatable("dnd-5e-craft.ui.journal.gold", value));
                 });
             }
             case LOOT -> {
@@ -141,7 +142,9 @@ public final class DmDirector {
                 if (value < 0 || value >= items.size() || value < 7) throw new IllegalArgumentException("Choose campaign loot");
                 party(player, target).forEach(member -> {
                     var loot = items.get(value).getDefaultInstance();
+                    var name = loot.getHoverName().copy();
                     if (!member.addItem(loot)) member.drop(loot, false);
+                    ModPackets.recordJournal(member, Component.translatable("dnd-5e-craft.ui.journal.loot", name));
                 });
             }
             case TELEPORT -> {
@@ -189,6 +192,32 @@ public final class DmDirector {
                 && (target == null || player.getUUID().equals(target))).toList();
         if (party.isEmpty()) throw new IllegalArgumentException("No eligible party member in this dimension");
         return party;
+    }
+
+    public static void splitGold(ServerPlayer operator, int totalGold) {
+        requireOperator(operator);
+        if (totalGold < 1 || totalGold > 10_000) throw new IllegalArgumentException("Choose 1 to 10000 gold");
+        var members = party(operator, null).stream().filter(player -> PlayerSheets.get(player).isPresent()).toList();
+        if (members.isEmpty()) throw new IllegalStateException("No party members with character sheets");
+        int each = totalGold / members.size();
+        int remainder = totalGold % members.size();
+        var credit = new CoinPurse(0, 0, 0, each, 0);
+        // Compute every deposit before changing any character balance.
+        List<net.dnd5ecraft.rules.character.CharacterSheetData> updated;
+        try {
+            updated = members.stream().map(member -> {
+                var sheet = PlayerSheets.get(member).orElseThrow();
+                return sheet.withCoins(sheet.coins().deposit(credit));
+            }).toList();
+        } catch (ArithmeticException overflow) {
+            throw new IllegalStateException("Gold would exceed a character's balance limit", overflow);
+        }
+        for (int i = 0; i < members.size(); i++) {
+            if (each == 0) break;
+            PlayerSheets.set(members.get(i), updated.get(i));
+            ModPackets.recordJournal(members.get(i), Component.translatable("dnd-5e-craft.ui.journal.gold", each));
+        }
+        ModPackets.notice(operator, Component.translatable("dnd-5e-craft.ui.journal.split_result", each, members.size(), remainder));
     }
 
     private static void requireOperator(ServerPlayer player) {

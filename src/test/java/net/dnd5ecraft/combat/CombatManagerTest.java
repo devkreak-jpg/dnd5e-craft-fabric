@@ -47,6 +47,24 @@ class CombatManagerTest {
             List.of(new DamageRoll(DamageType5e.SLASHING, new Dice(1, 8), 2)), true);
     private static final IntUnaryOperator FIXED_DICE = sides -> sides == 20 ? 12 : sides;
 
+    @Test void inspectingDoesNotRollDiceOrConsumeAdvantageAndDamageRetainsItsElement() {
+        var actor = creature(1, 0, 20, cell(0, 0), 100, 13, Set.of(), 0);
+        var enemy = creature(2, 1, 10, cell(1, 0), 100, 16, Set.of(), 0);
+        var manager = encounter(sides -> { throw new AssertionError("Preview rolled a die"); }, actor, enemy);
+        actor.advantageOnNextRoll = true;
+        var preview = manager.previewAttack(actor.id(), enemy.id(), 0, null);
+        assertEquals(RollMode.ADVANTAGE, preview.mode());
+        assertEquals(16, preview.armor());
+        assertTrue(preview.inRange());
+        assertTrue(actor.advantageOnNextRoll);
+        assertEquals(preview, manager.previewAttack(actor.id(), enemy.id(), 0, null));
+        manager.damage(actor.id(), enemy.id(), Map.of(DamageType5e.LIGHTNING, 14), true);
+        var damage = manager.drainEvents().stream().filter(event -> event.type() == EventType.DAMAGE).findFirst().orElseThrow();
+        assertEquals(DamageType5e.LIGHTNING, damage.damageType());
+        assertEquals(14, damage.value());
+        assertTrue(damage.critical());
+    }
+
     @ParameterizedTest
     @CsvSource({"acid_splash,0,12", "chill_touch,0,16", "eldritch_blast,0,20", "fire_bolt,0,20",
         "poison_spray,0,24", "ray_of_frost,0,16", "sacred_flame,0,16", "shocking_grasp,0,16",
@@ -278,6 +296,21 @@ class CombatManagerTest {
         assertTrue(combat.drainEvents().stream().anyMatch(event -> event.type() == EventType.MISS));
         combat.endTurn(attacker.id(), 13);
         assertEquals(12, mage.armorClass());
+    }
+
+    @Test
+    void reactionCommandUsesACompatiblePactSlotWhenNoRegularSlotIsAvailable() {
+        var attacker = creature(1, 0, 20, cell(0, 0), 100, 12, Set.of(), 0);
+        var warlock = entry(2, 1, 10, cell(1, 0), 100, 12, 3, Map.of(ClassType.WARLOCK, 3),
+                Set.of("shield"), Set.of(), 0);
+        var combat = encounter(FIXED_DICE, attacker, warlock);
+        combat.start();
+        var window = combat.attack(attacker.id(), warlock.id(), 0, 10).orElseThrow();
+        var choice = combat.commandReaction(warlock.id(), new Reaction(Kind.SHIELD, 1, Pool.REGULAR));
+        assertEquals(new Reaction(Kind.SHIELD, 2, Pool.PACT), choice);
+        assertTrue(combat.answerReaction(window.id(), warlock.id(), Optional.of(choice), 11));
+        assertEquals(1, warlock.slotsAvailable(Pool.PACT, 2));
+        assertEquals(100, warlock.hitPoints().current());
     }
 
     @Test
@@ -566,7 +599,7 @@ class CombatManagerTest {
         combat.answerReaction(window.id(), listener.id(), Optional.of(new Reaction(Kind.IMPROMPTU_ADD)), 120);
         assertEquals(90, enemy.hitPoints().current());
         assertEquals(0, listener.remaining(net.dnd5ecraft.rules.character.ClassFeature.CHAOS_POINTS));
-        assertEquals(10, listener.chaosShift);
+        assertEquals(15, listener.chaosShift);
     }
 
     @Test
@@ -605,6 +638,38 @@ class CombatManagerTest {
         assertEquals(90, intruder.hitPoints().current());
         assertEquals(destination, intruder.cell());
         assertEquals(cell(4, 0), owner.cell());
+    }
+
+    @Test
+    void echoSwapChargesBothResourcesAndCannotChargeAgain() {
+        var owner = creature(1, 0, 20, cell(0, 0), 100, 12, Set.of(), 0);
+        var defender = creature(2, 1, 10, cell(5, 0), 100, 12, Set.of(), 0);
+        var combat = encounter(FIXED_DICE, owner, defender);
+        combat.start();
+        combat.campaignSwap(owner.id(), cell(2, 0), 15, 1);
+        assertEquals(15, owner.view().resources().movementRemainingFeet());
+        assertFalse(owner.view().resources().available().contains(Resource.BONUS_ACTION));
+        assertThrows(IllegalArgumentException.class, () -> combat.campaignSwap(owner.id(), cell(1, 0), 15, 2));
+        assertEquals(cell(2, 0), owner.cell());
+        assertEquals(15, owner.view().resources().movementRemainingFeet());
+    }
+
+    @Test
+    void normalMeleeAttackCanReachFromAnEcho() {
+        var owner = creature(1, 0, 20, cell(0, 0), 100, 12, Set.of(), 0);
+        var defender = creature(2, 1, 10, cell(4, 0), 100, 12, Set.of(), 0);
+        var world = new CombatManager.Battlefield() {
+            @Override public boolean canOccupy(Cell cell) { return cell.y() == 0; }
+            @Override public boolean difficult(Cell cell) { return false; }
+            @Override public boolean blocksCover(Cell cell) { return false; }
+            @Override public Light lightAt(Cell cell) { return Light.BRIGHT; }
+            @Override public Cell echoCell(CombatantEntry actor) { return actor == owner ? cell(3, 0) : null; }
+        };
+        var combat = new CombatManager(new CombatEncounterState(List.of(owner, defender)), world, FIXED_DICE);
+        combat.start();
+        combat.attack(owner.id(), defender.id(), 0, 1);
+        assertEquals(90, defender.hitPoints().current());
+        assertEquals(cell(0, 0), owner.cell());
     }
 
     @Test

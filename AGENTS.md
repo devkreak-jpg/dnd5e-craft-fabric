@@ -13,7 +13,7 @@ java -cp build/classes/java/main net.dnd5ecraft.rules.RulesSelfTestRunner
 ./gradlew --offline --no-daemon build --console=plain -q | tail -n 60
 ```
 
-The installable remapped artifact is `build/libs/dnd-5e-craft-3.0.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 3 includes campaign actions, director selection, expanded reaction offers, and tactical turn tokens. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
+The installable remapped artifact is `build/libs/dnd-5e-craft-3.3.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 3 includes campaign actions, director selection, expanded reaction offers, and tactical turn tokens. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
 
 ## Phase checklist
 
@@ -22,12 +22,13 @@ The phase checks cover the offline build, the dedicated-server GameTests, and th
 - [x] Phase 0. Namespace, build setup, Mojang mappings, resources, and entry points.
 - [x] Phase 1. Dice, abilities, equipment, conditions, character progression, rests, and persistence.
 - [x] Phase 2. Spell registry with 56 entries, spell slots, concentration, 3D targeting, turn economy, combat actions, and reactions.
-- [x] Phase 3. Canonical bestiary of 15 presets, NPCs, dialogue, traps, cutscenes, 55 registered items, commands, and server Mixins.
+- [x] Phase 3. Canonical bestiary of 15 presets, NPCs, dialogue, traps, cutscenes, 59 registered items, commands, and server Mixins.
 - [x] Phase 4. Versioned C2S requests and S2C updates for characters, encounters, reactions, DM party data, notices, and screen signals.
 - [x] Phase 5A. Client state, keybinds, interactive character sheet, combat HUD, NPC renderer, and starter English and Russian strings.
 - [x] Phase 5B. Character creation, spellbook, dialogue, NPC Studio, trigger-zone editor, and DM console screens.
 - [x] Phase 6. Tactical world rendering, spinning die, AoE previews, floating combat bars, camera, darkvision, and NPC rendering.
 - [x] Phase 7. English and Russian localizations, Mixin side audit, and remapped release verification.
+- [x] **v3.3 Studio Masterpiece Edition**. Racial cosmetics and scaling, radial actions, shader-safe world rendering, and server-authoritative combat feedback.
 
 ## v1.1 hardening
 
@@ -49,7 +50,17 @@ The phase checks cover the offline build, the dedicated-server GameTests, and th
 - Operators can press **Shift+N** for the Director Palette. Right-click an NPC with the DM wand to select it, then click a destination. Sneak-click a destination to add a waypoint while the selected NPC is in Patrol mode. Use **Speak as NPC** or `/dnd dm speak <npc>` to toggle NPC speech. The NPC panel can pick the director's pair after a Harlequin uses Scene Change during their turn.
 - The cannon and echo track their owners and persist with their entity data. The server controls tactical movement, activation costs, targets, and reactions. The client renders companion models, race geometry, actor selection, and the new healthbar. Natural food regeneration leaves the tactical sheet unchanged. Spell and potion healing route through the tactical health rules.
 - Harlequin d20 windows support tactical attacks and direct spell saves. Tabletop d20s and other synchronous checks still use the existing resolution paths. Standard ranged item profiles expose weapon properties and ranges. Tactical ammo consumption and Loading limits are pending.
+- The Journal tab shows the latest 25 visible session events and stores personal notes in player NBT. The DM console splits a supplied total gold amount evenly among character sheets in the current dimension and reports any undistributed remainder.
+- Echo swaps spend a bonus action and 15 feet of movement. Outside encounters the sigil uses a six-second bonus-action cooldown and reduces the movement rate for that interval by the spent share of the character's speed.
 - `CampaignAssetIntegrityTest` checks the item models, decoded PNGs, and crowd skins. `LocalizationTest` checks English and Russian keys and substitutions. Campaign rules tests exercise hero values, combat reactions, weapon profiles, and speed boundaries.
+
+## v3.3 Studio Masterpiece Edition
+
+- Hold **V** to select one of eight radial actions. On your combat turn, aim at an enemy to see the selected attack's range, cover and hit chance. The server checks the target and computes the preview with the encounter's attack rules.
+- Press **O** to mark a visible block or entity within 48 blocks. Players within 96 blocks of the mark in the same dimension hear the ping and see a five-second beacon. The ruler uses each viewer's own distance, at five feet per block. Each player can place one mark per second.
+- The optional Studio packet channel carries resolved damage, healing, saves, critical rolls and rest effects. Only the roller receives the critical or fumble screen effect. A short rest shows the hit points actually restored and a 3.5-second campfire around the resting character.
+- The player and NPC dimension hooks cover direct pose queries as well as cached hitboxes. The client scales each shadow when the dispatcher draws it. Racial features use the eight-tile atlas and honor helmets, disguises, invisibility and the local first-person camera.
+- Client rendering uses textured entity geometry for die faces and overhead bars. Run the standalone rules and resource checks from the repository root. Exercise the radial wheel, combat inspector, die, ping and combat feedback in a shader-enabled client when changing their rendering.
 
 ## Phase 0 files
 

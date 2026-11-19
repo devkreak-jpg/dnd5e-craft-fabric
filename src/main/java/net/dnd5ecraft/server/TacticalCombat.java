@@ -25,6 +25,8 @@ import net.dnd5ecraft.item.ModItems;
 import net.dnd5ecraft.rules.campaign.CampaignRules;
 import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.network.ModPackets;
+import net.dnd5ecraft.network.StudioEffects;
+import net.dnd5ecraft.rules.equipment.DamagePipeline.AttackOutcome;
 import net.dnd5ecraft.network.PacketPolicy.TurnToken;
 import net.dnd5ecraft.network.Protocol;
 import net.dnd5ecraft.rules.spells.SpellAccess;
@@ -311,6 +313,7 @@ public final class TacticalCombat {
     public static boolean stop(ServerLevel level) {
         Session session = ACTIVE.remove(level);
         if (session == null) return false;
+        session.publish();
         session.restore();
         return true;
     }
@@ -323,27 +326,65 @@ public final class TacticalCombat {
         return target instanceof DndNpcEntity npc && npc.attitudeFor(player.getUUID()) == NpcAttitude.FRIENDLY;
     }
 
-    public static boolean campaignAttackHits(ServerPlayer player, LivingEntity target, int bonus) {
-        var encounter = session(player);
-        if (encounter != null && session(target) == encounter) return encounter.manager.campaignHit(player.getUUID(), target.getUUID(), bonus);
+    public static CombatManager.AttackPreview inspect(ServerPlayer player, LivingEntity target, int index) {
+        var session = session(player);
+        if (session == null || target.isInvisibleTo(player) || !target.isAlive()) return null;
+        CombatantEntry outsider = null;
+        if (!session.entities.containsKey(target.getUUID())) {
+            boolean npc = target instanceof DndNpcEntity;
+            if (!npc && !(target instanceof net.minecraft.world.entity.monster.Enemy)) return null;
+            var stats = npc ? ((DndNpcEntity)target).preset().combatStats() : new CombatantEntry.Stats(
+                    30, 10 + target.getArmorValue(), false, 0, 1, Map.of(), Map.of(), Map.of(), Map.of(), Set.of(), Set.of(), List.of());
+            var hp = npc ? ((DndNpcEntity)target).tacticalHealth() : new net.dnd5ecraft.rules.equipment.DamagePipeline.HitPoints(
+                    (int)Math.ceil(target.getHealth()), (int)Math.ceil(target.getMaxHealth()), 0, 0);
+            if (hp.current() <= 0) return null;
+            outsider = new CombatantEntry(target.getUUID(), target.getDisplayName().getString(), 1, 0, cell(target.blockPosition()),
+                    stats, hp, DeathSaveTracker.CONSCIOUS, Defenses.NONE, ExhaustionLevel.NONE, List.of());
+        }
+        return session.manager.previewAttack(player.getUUID(), target.getUUID(), index, outsider);
+    }
+
+    public static AttackOutcome campaignAttack(ServerPlayer player, LivingEntity target, int bonus) {
+        var encounter = session(target);
+        if (encounter != null && session(player) == encounter) return encounter.manager.campaignHit(player.getUUID(), target.getUUID(), bonus);
+        int armor = 10 + target.getArmorValue();
+        if (encounter != null) armor = encounter.state.require(target.getUUID()).armorClass();
+        else if (target instanceof ServerPlayer defender) armor = PlayerSheets.get(defender)
+                .map(sheet -> armorClass(defender, sheet)).orElse(armor);
+        else if (target instanceof DndNpcEntity npc) armor = npc.preset().armor();
         int roll = PlayerRules.dice(player).applyAsInt(20);
-        return roll == 20 || roll != 1 && roll + bonus >= (target instanceof DndNpcEntity npc ? npc.preset().armor() : 10 + target.getArmorValue());
+        var outcome = net.dnd5ecraft.rules.equipment.DamagePipeline.attackOutcome(roll, bonus, armor, false);
+        StudioEffects.natural(player, roll);
+        if (outcome == AttackOutcome.MISS) StudioEffects.status(target, "miss");
+        return outcome;
     }
 
     public static boolean campaignSave(ServerPlayer source, LivingEntity target, Ability ability, int dc) {
         var encounter = session(target);
         if (encounter != null) return encounter.manager.campaignSave(target.getUUID(), ability, dc);
-        if (target instanceof ServerPlayer player) return PlayerRules.save(player, ability, dc).succeeds();
         int modifier = target instanceof DndNpcEntity npc ? npc.preset().combatStats().saveModifier(ability) : 0;
-        return PlayerRules.dice(source).applyAsInt(20) + modifier >= dc;
+        boolean saved = target instanceof ServerPlayer player ? PlayerRules.save(player, ability, dc).succeeds()
+                : PlayerRules.dice(source).applyAsInt(20) + modifier >= dc;
+        if (!(target instanceof ServerPlayer)) StudioEffects.status(target, saved ? "saved" : "failed");
+        return saved;
     }
 
     public static void campaignDamage(ServerPlayer player, LivingEntity target, DamageType5e type, int amount) {
+        campaignDamage(player, target, type, amount, false);
+    }
+
+    public static void campaignDamage(ServerPlayer player, LivingEntity target, DamageType5e type, int amount, boolean critical) {
         var encounter = session(target);
-        if (encounter != null && session(player) == encounter) {
-            encounter.manager.damage(player.getUUID(), target.getUUID(), Map.of(type, amount), false);
-        } else if (encounter == null && !environmentDamage(target, type, amount)) {
-            target.hurt(player.damageSources().magic(), amount);
+        if (encounter != null) {
+            if (encounter.paused()) return;
+            UUID source = session(player) == encounter ? player.getUUID() : target.getUUID();
+            encounter.manager.damage(source, target.getUUID(), Map.of(type, amount), critical);
+        } else if (target instanceof ServerPlayer defender) {
+            applyDowntimeDamage(defender, PlayerSheets.getOrCreate(defender), type, amount, critical);
+        } else {
+            float before = target.getHealth() + target.getAbsorptionAmount();
+            if (target.hurt(player.damageSources().magic(), amount))
+                StudioEffects.damage(target, Math.round(before - target.getHealth() - target.getAbsorptionAmount()), type, critical);
         }
     }
 
@@ -441,16 +482,22 @@ public final class TacticalCombat {
     }
 
     private static boolean applyDowntimeDamage(ServerPlayer player, CharacterSheetData sheet, DamageType5e type, int amount) {
+        return applyDowntimeDamage(player, sheet, type, amount, false);
+    }
+
+    private static boolean applyDowntimeDamage(ServerPlayer player, CharacterSheetData sheet, DamageType5e type, int amount, boolean critical) {
         if (sheet.deathSaves().state() == DeathSaveTracker.State.DEAD) return false;
         var hp = sheet.hitPoints();
         var defenses = new Defenses(Set.of(), sheet.race().resistances(), Set.of());
         var feature = net.dnd5ecraft.rules.character.ClassFeature.RELENTLESS_ENDURANCE;
         var hit = net.dnd5ecraft.rules.equipment.DamagePipeline.apply(Map.of(type, amount), defenses, hp, sheet.remaining(feature) > 0);
-        var death = sheet.deathSaves().afterDamage(hp, hit, false);
+        var death = sheet.deathSaves().afterDamage(hp, hit, critical);
         var next = sheet.withCombatState(hit.remaining(), sheet.conditions(), death);
         PlayerSheets.set(player, hit.enduranceUsed() ? next.spend(feature, 1) : next);
         player.setHealth(Math.max(1, hit.remaining().current()));
+        StudioEffects.damage(player, hit.damageTaken(), type, critical);
         if (hit.damageTaken() > 0) ModPackets.sendDamage(player, hit.damageTaken());
+        PlayerSheets.announceDowntimeDeathState(player, sheet.deathSaves(), death);
         return hit.damageTaken() > 0;
     }
 
@@ -486,7 +533,7 @@ public final class TacticalCombat {
         if (gameTime - last < 10) return Optional.of(false);
         session.lastHazard.put(target.getUUID(), gameTime);
         return Optional.of(session.manager.damage(target.getUUID(), target.getUUID(),
-                Map.of(damageType(source), (int) Math.ceil(amount)), false).damageTaken() > 0);
+                Map.of(damageType(source), (int) Math.ceil(Math.min(amount, 10_000))), false).damageTaken() > 0);
     }
 
     private static DamageType5e damageType(DamageSource source) {
@@ -512,6 +559,7 @@ public final class TacticalCombat {
         var healed = sheet.hitPoints().heal(sheet.hitPoints().maximum());
         PlayerSheets.set(player, sheet.withCombatState(healed, sheet.conditions(), sheet.deathSaves().afterHealing(healed.current())));
         player.setHealth(healed.current());
+        StudioEffects.healed(player, healed.current() - sheet.hitPoints().current());
     }
 
     static void dmInspire(ServerPlayer player) {
@@ -534,6 +582,7 @@ public final class TacticalCombat {
             if (!session.paused()) session.manager.restoreFromVanillaMagic(player.getUUID(), restored);
         } else {
             var health = sheet.hitPoints().heal(restored);
+            StudioEffects.healed(player, health.current() - sheet.hitPoints().current());
             PlayerSheets.set(player, sheet.withCombatState(health, sheet.conditions(), sheet.deathSaves().afterHealing(health.current())));
             player.setHealth(Math.min(player.getMaxHealth(), health.current()));
         }
@@ -577,6 +626,7 @@ public final class TacticalCombat {
         private UUID pathActor;
         private Cell pendingStep;
         private UUID lastTurn;
+        private CombatEncounterState.Snapshot deathSaveSnapshot;
         private UUID deathSaveActor;
         private long deathSaveUntil;
         private final Map<UUID, LivingEntity> entities = new LinkedHashMap<>();
@@ -667,15 +717,21 @@ public final class TacticalCombat {
             long time = now();
             manager.tick(time);
             UUID waiting = manager.pendingDeathSave().orElse(null);
-            if (!java.util.Objects.equals(waiting, deathSaveActor)) {
+            boolean changed = !java.util.Objects.equals(waiting, deathSaveActor);
+            if (changed) {
                 deathSaveActor = waiting;
                 deathSaveUntil = time + 10_000;
             }
             if (waiting != null && time < deathSaveUntil) {
-                synchronize();
-                publish();
+                var snapshot = manager.snapshot();
+                if (changed || level.getGameTime() % 20 == 0 || !snapshot.equals(deathSaveSnapshot)) {
+                    deathSaveSnapshot = snapshot;
+                    synchronize();
+                    publish();
+                }
                 return;
             }
+            deathSaveSnapshot = null;
             if (waiting != null) manager.resolveDeathSave(waiting, RollMode.NORMAL);
             var window = manager.reactionWindow();
             if (window.isPresent()) {
@@ -864,6 +920,31 @@ public final class TacticalCombat {
         private void publish() {
             var events = manager.drainEvents();
             for (var event : events) {
+                var receiver = entities.get(event.target());
+                if (receiver != null) {
+                    switch (event.type()) {
+                        case DAMAGE -> StudioEffects.damage(receiver, event.value(), event.damageType(), event.critical());
+                        case CAST -> StudioEffects.spell(receiver, event.detail());
+                        case HEAL -> StudioEffects.healed(receiver, event.value());
+                        case SAVE -> StudioEffects.status(receiver, event.value() == 1 ? "saved" : "failed");
+                        case HIT, MISS -> {
+                            if (event.type() == CombatManager.EventType.MISS) StudioEffects.status(receiver, "miss");
+                            if (entities.get(event.actor()) instanceof ServerPlayer roller) StudioEffects.natural(roller, event.value());
+                        }
+                        default -> { }
+                    }
+                }
+                if (event.type() == CombatManager.EventType.DEFEATED
+                        || event.type() == CombatManager.EventType.HIT && event.detail().equals("CRITICAL")) {
+                    var actor = entities.get(event.actor());
+                    var target = entities.get(event.target());
+                    if (actor != null && target != null) {
+                        var entry = event.type() == CombatManager.EventType.DEFEATED
+                                ? Component.translatable("dnd-5e-craft.ui.journal.defeated", target.getDisplayName())
+                                : Component.translatable("dnd-5e-craft.ui.journal.combat_critical", actor.getDisplayName(), target.getDisplayName());
+                        for (var member : entities.values()) if (member instanceof ServerPlayer player) ModPackets.recordJournal(player, entry);
+                    }
+                }
                 if (event.type() == CombatManager.EventType.DAMAGE && event.value() > 0
                         && entities.get(event.target()) instanceof ServerPlayer target) ModPackets.sendDamage(target, event.value());
                 if (event.type() == CombatManager.EventType.CAMPAIGN && entities.get(event.target()) != null) {
@@ -880,7 +961,7 @@ public final class TacticalCombat {
                 if (event.type() != CombatManager.EventType.TURN) continue;
                 if (lastTurn != null && entities.get(lastTurn) instanceof ServerPlayer previous) {
                     var echo = CampaignActions.companion(previous, EchoAvatarEntity.class);
-                    if (echo != null && !CampaignRules.echoInRange(previous.distanceTo(echo))) echo.discard();
+                    if (echo != null && !CampaignRules.echoInRange(previous.distanceTo(echo))) echo.dissolve();
                 }
                 lastTurn = event.actor();
                 var actor = entities.get(event.actor());
@@ -907,6 +988,7 @@ public final class TacticalCombat {
                 var entity = entities.get(entry.id());
                 if (entity == null || entity.isRemoved()) continue;
                 if (entity.isAlive()) syncHealth(entry, entity);
+                if (entity instanceof ServerPlayer player) ((PlayerCharacter) player).dnd5e$campaignFlags(0);
                 if (entity instanceof DndNpcEntity npc) {
                     if (entry.dead()) npc.discard();
                     else npc.restoreAiAfterCombat();
@@ -921,6 +1003,10 @@ public final class TacticalCombat {
 
     static Formula armorFormula(net.minecraft.world.entity.player.Player player, CharacterSheetData sheet) {
         var chest = player.getItemBySlot(EquipmentSlot.CHEST);
+        if (chest.is(ModItems.STUDDED_LEATHER_ARMOR)) return Formula.STUDDED_LEATHER;
+        if (chest.is(ModItems.BREASTPLATE)) return Formula.BREASTPLATE;
+        if (chest.is(ModItems.HALF_PLATE)) return Formula.HALF_PLATE;
+        if (chest.is(ModItems.PLATE_ARMOR)) return Formula.PLATE;
         if (chest.is(ModItems.SCALE_MAIL)) return Formula.SCALE_MAIL;
         if (chest.is(ModItems.SPLINT_ARMOR)) return Formula.SPLINT;
         if (chest.getItem() instanceof ArmorItem armor) {
@@ -928,9 +1014,10 @@ public final class TacticalCombat {
             if (material == ArmorMaterials.LEATHER) return Formula.LEATHER;
             if (material == ArmorMaterials.CHAIN) return Formula.CHAIN_SHIRT;
             if (material == ArmorMaterials.GOLD) return Formula.BREASTPLATE;
-            return material == ArmorMaterials.IRON ? Formula.CHAIN_MAIL : Formula.PLATE;
+            if (material == ArmorMaterials.IRON) return Formula.CHAIN_MAIL;
+            if (material == ArmorMaterials.DIAMOND || material == ArmorMaterials.NETHERITE) return Formula.PLATE;
+            if (material == ArmorMaterials.TURTLE) return Formula.LEATHER;
         }
-        if (player.getArmorValue() > 0) return Formula.LEATHER;
         if (sheet.startingClass() == ClassType.BARBARIAN) return Formula.BARBARIAN;
         if (!PlayerWeaponProfiles.shield(player.getOffhandItem()) && (sheet.startingClass() == ClassType.MONK || (sheet.classLevels().containsKey(ClassType.MONK)
                 && !sheet.classLevels().containsKey(ClassType.BARBARIAN)))) return Formula.MONK;

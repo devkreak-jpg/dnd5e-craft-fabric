@@ -49,6 +49,7 @@ public final class ClientPacketHandlers {
                 send(Action.SYNC);
             }
         });
+        receive(ModPackets.STUDIO, false);
         receive(ModPackets.UPDATE, false);
         receive(ModPackets.TIMED_UPDATE, true);
         receive(ModPackets.TABLETOP, false);
@@ -106,6 +107,13 @@ public final class ClientPacketHandlers {
         }
         ClientPlayNetworking.send(ModPackets.REQUEST, buf);
         return true;
+    }
+
+    private static net.minecraft.world.phys.Vec3 effectPosition(FriendlyByteBuf buf) {
+        var p = new net.minecraft.world.phys.Vec3(buf.readDouble(), buf.readDouble(), buf.readDouble());
+        if (!Double.isFinite(p.x) || !Double.isFinite(p.y) || !Double.isFinite(p.z))
+            throw new IllegalArgumentException("Invalid effect position");
+        return p;
     }
 
     private static Consumer<Minecraft> decode(Update kind, FriendlyByteBuf buf, boolean timed) {
@@ -176,6 +184,35 @@ public final class ClientPacketHandlers {
                 var roll = roll(buf);
                 yield ignored -> ClientDndState.roll(roll);
             }
+            case S2C_COMBAT_FLOAT_TEXT -> {
+                var pos = effectPosition(buf);
+                var value = buf.readUtf(64);
+                int color = buf.readInt();
+                boolean critical = buf.readBoolean(), miss = buf.readBoolean();
+                yield client -> net.dnd5ecraft.client.render.FloatingCombatTextRenderer.add(pos, value, color, critical, miss);
+            }
+            case S2C_TACTICAL_PING -> {
+                var pos = effectPosition(buf);
+                String name = buf.readUtf(80);
+                yield client -> net.dnd5ecraft.client.render.TacticalPingRenderer.add(pos, name);
+            }
+            case S2C_SHORT_REST_FX -> {
+                int entity = buf.readVarInt(), restored = buf.readVarInt();
+                yield client -> net.dnd5ecraft.client.render.ShortRestEffects.start(entity, restored);
+            }
+            case S2C_NATURAL -> {
+                boolean critical = buf.readBoolean();
+                yield client -> ClientDndState.natural(critical ? 20 : 1);
+            }
+            case S2C_INSPECT -> {
+                var target = buf.readUUID();
+                int index = buf.readVarInt();
+                var cover = buf.readEnum(net.dnd5ecraft.combat.CoverRaycaster.Cover.class);
+                var mode = buf.readEnum(net.dnd5ecraft.rules.ability.AbilityCheckEngine.RollMode.class);
+                var preview = new net.dnd5ecraft.combat.CombatManager.AttackPreview(cover, mode, buf.readInt(),
+                        buf.readVarInt(), buf.readBoolean(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt());
+                yield client -> net.dnd5ecraft.client.gui.hud.CombatInspector.receive(target, index, preview);
+            }
             case PING -> {
                 var cell = cell(buf);
                 var player = buf.readUtf(80);
@@ -215,6 +252,11 @@ public final class ClientPacketHandlers {
                         input.readUtf(80), input.readVarInt(), input.readVarInt(), input.readVarInt(), input.readVarInt(),
                         input.readVarInt(), readEnum(input, net.dnd5ecraft.rules.conditions.DeathSaveTracker.State.class)));
                 yield ignored -> ClientDndState.party(party);
+            }
+            case JOURNAL -> {
+                var notes = buf.readUtf(Protocol.JOURNAL_NOTES_LIMIT);
+                var entries = readList(buf, Protocol.JOURNAL_LIMIT, FriendlyByteBuf::readComponent);
+                yield ignored -> ClientDndState.journal(notes, entries);
             }
             case CINEMATIC_BANNER -> {
                 var title = buf.readComponent();

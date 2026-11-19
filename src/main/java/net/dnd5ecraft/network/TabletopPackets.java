@@ -223,7 +223,10 @@ public final class TabletopPackets {
                 ModPackets.send(recipient, Update.ROLL, out -> PacketCodec.roll(out, die));
             }
             send(recipient, Update.TABLETOP_RESULT, out -> TabletopCodec.card(out, card));
-            recipient.sendSystemMessage(TabletopText.line(card));
+            var line = TabletopText.line(card);
+            if (check.kind() != Kind.DICE || die != null) ModPackets.recordJournal(recipient,
+                    die != null && outcome.kept() == 20 ? Component.translatable("dnd-5e-craft.ui.journal.critical", line) : line);
+            recipient.sendSystemMessage(line);
         }
         return card;
     }

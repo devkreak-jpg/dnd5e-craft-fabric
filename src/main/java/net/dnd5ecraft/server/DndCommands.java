@@ -44,14 +44,18 @@ public final class DndCommands {
     private DndCommands() {}
 
     public static void register() {
-        CommandRegistrationCallback.EVENT.register((dispatcher, access, environment) -> dispatcher.register(literal("dnd")
+        CommandRegistrationCallback.EVENT.register((dispatcher, access, environment) -> dispatcher.register(commandTree()));
+    }
+
+    static LiteralArgumentBuilder<CommandSourceStack> commandTree() {
+        return literal("dnd")
                 .then(literal("choose").then(argument("choice", StringArgumentType.word()).executes(context -> run(context, player -> {
                     if (!DialogueSessions.choose(player, StringArgumentType.getString(context, "choice"))) {
                         throw new IllegalStateException("No active dialogue choice");
                     }
                 }))))
                 .then(dmCommands())
-                .then(literal("preset").then(argument("hero", StringArgumentType.word())
+                .then(literal("preset").requires(source -> source.hasPermission(2)).then(argument("hero", StringArgumentType.word())
                         .suggests((context, builder) -> net.minecraft.commands.SharedSuggestionProvider.suggest(
                                 java.util.Arrays.stream(net.dnd5ecraft.rules.campaign.CampaignHero.values())
                                         .map(net.dnd5ecraft.rules.campaign.CampaignHero::id), builder))
@@ -73,16 +77,16 @@ public final class DndCommands {
                     if (PlayerSheets.get(player).isPresent()) throw new IllegalStateException("You already have a character");
                     ModPackets.sendSheet(player, true);
                 })))
-                .then(literal("class").then(argument("name", StringArgumentType.word()).executes(context -> run(context, player -> {
+                .then(literal("class").requires(source -> source.hasPermission(2)).then(argument("name", StringArgumentType.word()).executes(context -> run(context, player -> {
                     PlayerRules.requireDowntime(player);
                     levelUp(player, ClassType.valueOf(word(context, "name")), false);
                 }))))
-                .then(literal("subclass").then(argument("name", StringArgumentType.word()).executes(context -> run(context, player -> {
+                .then(literal("subclass").requires(source -> source.hasPermission(2)).then(argument("name", StringArgumentType.word()).executes(context -> run(context, player -> {
                     PlayerRules.requireDowntime(player);
                     var type = net.dnd5ecraft.rules.character.SubclassType.valueOf(word(context, "name"));
                     PlayerSheets.set(player, PlayerSheets.getOrCreate(player).chooseSubclass(type));
                 }))))
-                .then(literal("feat").then(argument("name", StringArgumentType.word())
+                .then(literal("feat").requires(source -> source.hasPermission(2)).then(argument("name", StringArgumentType.word())
                         .executes(context -> takeFeat(context, null))
                         .then(argument("ability", StringArgumentType.word()).executes(context -> takeFeat(context,
                                 net.dnd5ecraft.rules.ability.Ability.fromId(word(context, "ability")))))))
@@ -189,11 +193,18 @@ public final class DndCommands {
                                                 BoolArgumentType.getBool(context, "enabled"))))))
                                 .then(literal("dialogue").then(argument("tree", CompoundTagArgument.compoundTag()).executes(context ->
                                         run(context, player -> npc(context).setDialogue(DialogueNbt.read(
-                                                CompoundTagArgument.getCompoundTag(context, "tree")))))))))));
+                                                CompoundTagArgument.getCompoundTag(context, "tree")))))))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> dmCommands() {
         return literal("dm").requires(source -> source.hasPermission(2))
+                .then(literal("give_gear").then(argument("hero", StringArgumentType.word())
+                        .suggests((context, builder) -> net.minecraft.commands.SharedSuggestionProvider.suggest(
+                                java.util.Arrays.stream(net.dnd5ecraft.rules.campaign.CampaignHero.values())
+                                        .map(net.dnd5ecraft.rules.campaign.CampaignHero::id), builder))
+                        .executes(context -> giveGear(context, context.getSource().getPlayerOrException()))
+                        .then(argument("target", EntityArgument.player())
+                                .executes(context -> giveGear(context, EntityArgument.getPlayer(context, "target"))))))
                 .then(literal("speak").then(argument("npc", EntityArgument.entity()).executes(context ->
                         run(context, player -> DmDirector.select(player, npc(context), true)))))
                 .executes(context -> run(context, DndCommands::toggleDm))
@@ -369,6 +380,18 @@ public final class DndCommands {
         throw rejected("Select a D&D NPC");
     }
 
+    private static int giveGear(CommandContext<CommandSourceStack> context, ServerPlayer target)
+            throws CommandSyntaxException {
+        try {
+            var hero = net.dnd5ecraft.rules.campaign.CampaignHero.valueOf(word(context, "hero"));
+            CampaignCharacters.giveGear(target, hero);
+            context.getSource().sendSuccess(() -> Component.translatable("dnd-5e-craft.dm.gear_given", target.getDisplayName()), false);
+            return 1;
+        } catch (IllegalArgumentException | IllegalStateException rejected) {
+            throw rejected(rejected.getMessage());
+        }
+    }
+
     private static int reaction(CommandContext<CommandSourceStack> context, Optional<CombatManager.Reaction> reaction)
             throws CommandSyntaxException {
         return run(context, player -> answer(context, player, reaction));
@@ -379,7 +402,7 @@ public final class DndCommands {
         TacticalCombat.requireUnfrozen(player);
         var control = TacticalCombat.control(player);
         if (!control.manager().answerReaction(LongArgumentType.getLong(context, "window"),
-                control.actor(), reaction, TacticalCombat.now())) {
+                control.actor(), reaction.map(value -> control.manager().commandReaction(control.actor(), value)), TacticalCombat.now())) {
             throw new IllegalStateException("This reaction is unavailable or expired");
         }
     }

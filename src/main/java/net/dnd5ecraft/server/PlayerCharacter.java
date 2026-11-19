@@ -14,6 +14,10 @@ public interface PlayerCharacter {
     void dnd5e$campaignFlags(int flags);
     int dnd5e$disguise();
     void dnd5e$disguise(int appearance);
+    long dnd5e$disguiseExpiresAt();
+    void dnd5e$disguiseExpiresAt(long expiresAt);
     void dnd5e$setCosmetics(boolean enabled);
+    String dnd5e$journalNotes();
+    void dnd5e$journalNotes(String notes);
     boolean dnd5e$isScaleKey(EntityDataAccessor<?> key);
 }

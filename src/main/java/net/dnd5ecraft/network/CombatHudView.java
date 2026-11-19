@@ -8,6 +8,21 @@ import net.dnd5ecraft.network.Protocol.Creature;
 public final class CombatHudView {
     private CombatHudView() {}
 
+    public record Layout(int vitalsTop, int oxygenTop, int resourcesTop, int resourcesHeight,
+                         int reactionsTop, int reactionsBottom, boolean compactReactions) {}
+
+    public static Layout layout(int height, int choices) {
+        int vitals = height - 54;
+        int oxygen = vitals - 9;
+        int resourcesHeight = height < 220 ? 21 : 33;
+        int resources = oxygen - 5 - resourcesHeight;
+        int reactionsBottom = resources - 6;
+        int full = 29 + Math.max(0, choices) * 12;
+        boolean compact = reactionsBottom - full < 53;
+        int top = Math.max(53, reactionsBottom - (compact ? 26 : full));
+        return new Layout(vitals, oxygen, resources, resourcesHeight, top, reactionsBottom, compact);
+    }
+
     public static List<Creature> initiative(Combat combat, int capacity) {
         var roster = combat.initiative();
         int count = Math.min(capacity, roster.size());

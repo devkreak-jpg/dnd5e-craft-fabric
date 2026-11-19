@@ -21,6 +21,29 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(LivingEntity.class)
 public abstract class LivingEntityCombatMixin {
+    // Vanilla sleeping poses bypass both the usual dimensions and standing-eye methods.
+    @Inject(method = "getEyeHeight(Lnet/minecraft/world/entity/Pose;Lnet/minecraft/world/entity/EntityDimensions;)F",
+            at = @At("RETURN"), cancellable = true)
+    @Unique
+    private void dnd5e$sleepingEyes(net.minecraft.world.entity.Pose pose, net.minecraft.world.entity.EntityDimensions dimensions,
+                                    CallbackInfoReturnable<Float> result) {
+        if (pose != net.minecraft.world.entity.Pose.SLEEPING) return;
+        float scale = (Object)this instanceof PlayerCharacter player ? player.dnd5e$physicalScale()
+                : (Object)this instanceof net.dnd5ecraft.entity.DndNpcEntity npc ? npc.physicalScale() : 1;
+        if (scale != 1f) result.setReturnValue(result.getReturnValue() * scale);
+    }
+
+    @Inject(method = "getDimensions", at = @At("RETURN"), cancellable = true)
+    @Unique
+    private void dnd5e$sleepingNpcDimensions(net.minecraft.world.entity.Pose pose,
+            CallbackInfoReturnable<net.minecraft.world.entity.EntityDimensions> result) {
+        if (pose == net.minecraft.world.entity.Pose.SLEEPING && (Object)this instanceof net.dnd5ecraft.entity.DndNpcEntity npc) {
+            var base = result.getReturnValue();
+            float scale = npc.physicalScale();
+            result.setReturnValue(new net.minecraft.world.entity.EntityDimensions(base.width * scale, base.height * scale, base.fixed));
+        }
+    }
+
     @Inject(method = "hurt", at = @At("HEAD"), cancellable = true)
     @Unique
     private void dnd5e$routeDamage(DamageSource source, float amount, CallbackInfoReturnable<Boolean> callback) {

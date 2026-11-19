@@ -34,7 +34,7 @@ class TriggerAndBestiaryTest {
         occupants.activated(trap, 10);
         assertEquals(110L, occupants.nextActivation());
         assertEquals(List.of(), occupants.entrants(List.of(one, two), 100));
-        assertEquals(List.of(), occupants.entrants(List.of(one, two), 110));
+        assertEquals(List.of(two), occupants.entrants(List.of(one, two), 110));
         assertEquals(List.of(), occupants.entrants(List.of(two), 111));
         assertEquals(List.of(one), occupants.entrants(List.of(one, two), 112));
         occupants.activated(TriggerZoneSpec.between(a, b, Mode.AMBUSH), 112);

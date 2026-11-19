@@ -52,6 +52,8 @@ public final class DmMasterConsoleScreen extends DndScreen {
             button(text("previous"), x + 66, y, 64, () -> { partyPage--; rebuild(); }).active = partyPage > 0;
             button(text("next"), x + 136, y, 64, () -> { partyPage++; rebuild(); })
                     .active = (partyPage + 1) * partyRows() < ClientDndState.party().size();
+            button(text("journal.split"), x + 206, y, Math.max(12, innerWidth() - 206),
+                    () -> minecraft.setScreen(new SplitGoldScreen(this))).active = ClientDndState.state().operator();
             return;
         }
         int col = (innerWidth() - 12) / 3;
@@ -91,6 +93,8 @@ public final class DmMasterConsoleScreen extends DndScreen {
             ClientPacketHandlers.send(Action.PARTY);
             minecraft.setScreen(new DmDirectorScreen(this));
         }).active = op;
+        if (panelHeight >= 212) button(text("journal.split"), second, top + 160, col,
+                () -> minecraft.setScreen(new SplitGoldScreen(this))).active = op;
         button(text("close"), x, bottom() - 25, col, this::onClose);
         cycle("area", shape, AoEGeometry.values(), second, bottom() - 25, col, value -> { shape = value; rebuild(); });
         button(text("dm.preview"), third, bottom() - 25, col, () -> {

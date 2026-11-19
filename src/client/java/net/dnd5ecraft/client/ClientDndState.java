@@ -20,17 +20,24 @@ import net.minecraft.network.chat.Component;
 
 public final class ClientDndState {
     public record Die(Protocol.Roll roll, long started) {}
-    public record Ping(Cell cell, String player, long started) {}
     public record Notice(Component message, long until) {}
 
     private static Protocol.State state = new Protocol.State(false, false, 0, null);
     private static CharacterSheetData sheet;
     private static int sheetArmor;
+    private static List<Component> journal = List.of();
+    private static String journalNotes;
+
+    public static List<Component> journal() { return journal; }
+    public static String journalNotes() { return journalNotes; }
+    static void journal(String notes, List<Component> entries) {
+        journalNotes = notes;
+        journal = List.copyOf(entries);
+    }
     private static List<Protocol.PartyMember> party = List.of();
     private static Notice banner;
     private static List<Integer> draft = List.of();
     private static final List<Die> dice = new ArrayList<>();
-    private static final List<Ping> pings = new ArrayList<>();
     private static Notice notice;
     private static long reactionDeadline;
     private static long shakeUntil;
@@ -86,6 +93,9 @@ public final class ClientDndState {
         results.add(new TabletopResult(card, now));
         var player = Minecraft.getInstance().player;
         if (player == null || !card.roller().equals(player.getUUID())) return;
+        var kind = card.check().kind();
+        if (card.outcome().sides() == 20 && kind != Kind.DAMAGE && kind != Kind.HIT_DIE
+                && (kind != Kind.DICE || card.check().id().equals("1d20"))) natural(card.outcome().kept());
         player.playSound(net.minecraft.sounds.SoundEvents.BONE_BLOCK_PLACE, .45f, 1.35f);
         if (card.check().kind() == Kind.HIT) {
             var weapon = Weapon.valueOf(card.check().id());
@@ -109,7 +119,6 @@ public final class ClientDndState {
     public static Notice banner() { return banner; }
     public static List<Integer> draft() { return draft; }
     public static List<Die> dice() { return List.copyOf(dice); }
-    public static List<Ping> pings() { return List.copyOf(pings); }
     public static Notice notice() { return notice; }
 
     static void state(Protocol.State next) {
@@ -131,13 +140,36 @@ public final class ClientDndState {
     static void party(List<Protocol.PartyMember> next) { party = state.operator() ? List.copyOf(next) : List.of(); }
     static void banner(Component title) { banner = new Notice(title, Util.getMillis() + 3000); }
     static void draft(List<Integer> next) { draft = List.copyOf(next); }
+    private static long cinemaStart;
+    private static int cinemaRoll;
+    private static Notice restToast;
+    public static void restToast(Component value) { restToast = new Notice(value, Util.getMillis() + 3500); }
+    public static Notice restToast() { return restToast != null && restToast.until() > Util.getMillis() ? restToast : null; }
+
+    public static void natural(int roll) {
+        var player = Minecraft.getInstance().player;
+        if (player == null || roll != 1 && roll != 20) return;
+        cinemaStart = Util.getMillis();
+        cinemaRoll = roll;
+        player.playSound(roll == 20 ? net.minecraft.sounds.SoundEvents.PLAYER_LEVELUP : net.minecraft.sounds.SoundEvents.ANVIL_LAND,
+                roll == 20 ? .55f : .29f, roll == 20 ? 1.35f : .7f);
+    }
+
+    public static boolean goldenFlash() { return cinemaRoll == 20; }
+    public static double cinema() {
+        if (cinemaRoll == 0) return 0;
+        return Math.max(0, 1 - (Util.getMillis() - cinemaStart) / (goldenFlash() ? 240.0 : 260.0));
+    }
+
     static void roll(Protocol.Roll roll) {
+        var player = Minecraft.getInstance().player;
+        if (player != null && roll.player().equals(player.getUUID())) natural(roll.result());
         if (dice.size() >= 24) dice.remove(0);
         dice.add(new Die(roll, Util.getMillis()));
     }
     static void ping(Cell cell, String player) {
-        if (pings.size() >= 16) pings.remove(0);
-        pings.add(new Ping(cell, player, Util.getMillis()));
+        net.dnd5ecraft.client.render.TacticalPingRenderer.add(new net.minecraft.world.phys.Vec3(
+                cell.x() + .5, cell.y() + 1, cell.z() + .5), player);
     }
     public static void notify(Component message) { notice = new Notice(message, Util.getMillis() + 3500); }
     static void damage(int amount) {
@@ -150,7 +182,6 @@ public final class ClientDndState {
     public static void tick() {
         long now = Util.getMillis();
         dice.removeIf(die -> now - die.started() > 3200);
-        pings.removeIf(ping -> now - ping.started() > 6500);
         if (notice != null && notice.until() < now) notice = null;
         if (banner != null && banner.until() < now) banner = null;
     }
@@ -165,6 +196,8 @@ public final class ClientDndState {
         mode = RollMode.NORMAL;
         whisper = inspiration = tabletop = smell = false;
         results.clear();
+        journal = List.of();
+        journalNotes = null;
         prompt = null;
         clearWorldEffects();
     }
@@ -175,7 +208,12 @@ public final class ClientDndState {
         lastHit = null;
         concentration = Map.of();
         dice.clear();
-        pings.clear();
+        restToast = null;
+        cinemaRoll = 0;
+        net.dnd5ecraft.client.render.FloatingCombatTextRenderer.clear();
+        net.dnd5ecraft.client.render.ShortRestEffects.clear();
+        net.dnd5ecraft.client.render.TacticalPingRenderer.clear();
+        net.dnd5ecraft.client.gui.hud.CombatInspector.clear();
         notice = null;
         shakeUntil = 0;
         ClientActions.cancelAim();

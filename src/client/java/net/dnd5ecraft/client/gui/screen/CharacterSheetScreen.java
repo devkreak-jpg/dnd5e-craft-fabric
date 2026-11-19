@@ -35,8 +35,8 @@ import static net.dnd5ecraft.client.gui.theme.DndUiTheme.*;
 import static net.dnd5ecraft.network.TabletopText.signed;
 
 public final class CharacterSheetScreen extends DndScreen {
-    private enum Tab { OVERVIEW, SKILLS, ACTIONS, INVENTORY }
-    private enum ActionGroup { WEAPONS, MANEUVERS, FEATURES }
+    private enum Tab { OVERVIEW, SKILLS, ACTIONS, INVENTORY, JOURNAL }
+    private enum ActionGroup { WEAPONS, CATALOG, MANEUVERS, FEATURES }
 
     private static final List<ClassFeature> FEATURES = List.of(ClassFeature.RAGE, ClassFeature.SECOND_WIND,
             ClassFeature.ACTION_SURGE, ClassFeature.KI_POINTS, ClassFeature.LAY_ON_HANDS, ClassFeature.BARDIC_INSPIRATION,
@@ -46,6 +46,10 @@ public final class CharacterSheetScreen extends DndScreen {
 
     private Tab tab = Tab.OVERVIEW;
     private int page;
+    private String journalDraft;
+    private int journalRefresh;
+    private int journalCount;
+    private net.minecraft.client.gui.components.EditBox journalInput;
     private boolean compact;
     private ActionGroup actionGroup = ActionGroup.WEAPONS;
     private int diceSides = 20;
@@ -63,7 +67,8 @@ public final class CharacterSheetScreen extends DndScreen {
     @Override protected int maximumHeight() { return 405; }
     private int bodyTop() { return top + 72; }
     private boolean shortLayout() { return panelHeight < 303; }
-    private int bodyBottom() { return bottom() - 92; }
+    private boolean tinyLayout() { return panelHeight < 225; }
+    private int bodyBottom() { return bottom() - (tinyLayout() ? 47 : 92); }
 
     @Override protected void controls() {
         presented = ClientDndState.sheet();
@@ -84,6 +89,7 @@ public final class CharacterSheetScreen extends DndScreen {
             case SKILLS -> skills(false);
             case ACTIONS -> actions();
             case INVENTORY -> pages(inventory().size(), rowCount());
+            case JOURNAL -> journalControls();
         }
     }
 
@@ -103,10 +109,12 @@ public final class CharacterSheetScreen extends DndScreen {
             toggle.active = tabletop;
             toggle.setTooltip(Tooltip.create(text("tabletop.inspiration_hint")));
         }
-        int width = (innerWidth() - 12) / 4;
+        int width = (innerWidth() - (Tab.values().length - 1) * 4) / Tab.values().length;
         for (Tab choice : Tab.values()) {
             pill(name("sheet.tab", choice), x + choice.ordinal() * (width + 4), top + 48, width, 18, tab == choice, () -> {
-                tab = choice; page = 0; rebuild();
+                tab = choice; page = 0;
+                if (choice == Tab.JOURNAL) ClientPacketHandlers.send(Action.JOURNAL);
+                rebuild();
             });
         }
     }
@@ -179,32 +187,33 @@ public final class CharacterSheetScreen extends DndScreen {
     private void actions() {
         if (minecraft.player == null) return;
         int x = left + 12, w = innerWidth();
-        boolean compactActions = shortLayout();
-        if (compactActions) {
-            int third = (w - 8) / 3;
-            for (var group : ActionGroup.values()) {
-                pill(name("tabletop.group", group), x + group.ordinal() * (third + 4), bodyTop(), third, 15,
-                        group == actionGroup, () -> { actionGroup = group; page = 0; rebuild(); });
-            }
+        int groupWidth = (w - 12) / ActionGroup.values().length;
+        for (var group : ActionGroup.values()) {
+            pill(name("tabletop.group", group), x + group.ordinal() * (groupWidth + 4), bodyTop(), groupWidth, 15,
+                    group == actionGroup, () -> { actionGroup = group; page = 0; rebuild(); });
         }
         int y = actionStart();
-        if (!compactActions || actionGroup == ActionGroup.WEAPONS) {
-            weaponButtons(x, y, w, compactActions ? 18 : 21);
-            if (compactActions) return;
+        if (actionGroup == ActionGroup.WEAPONS) {
+            weaponButtons(x, y, w, 18);
+            return;
+        }
+        if (actionGroup == ActionGroup.CATALOG) {
+            pages(net.dnd5ecraft.rules.equipment.WeaponStatsRegistry.Weapon.values().length, catalogRows());
+            return;
         }
         boolean turn = ownTurn();
         var targets = combatSnapshot == null ? List.<net.dnd5ecraft.network.Protocol.Creature>of() : combatSnapshot.initiative().stream()
                 .filter(actor -> actor.life() != State.DEAD && !actor.id().equals(minecraft.player.getUUID())).toList();
         int index = java.util.stream.IntStream.range(0, targets.size()).filter(i -> targets.get(i).id().equals(target)).findFirst().orElse(-1);
         if (index < 0) target = null;
-        int targetY = y + (compactActions ? 0 : 64);
+        int targetY = y;
         pill(text("tabletop.action_target", index < 0 ? text("tabletop.no_target") : targets.get(index).name()), x, targetY, w,
                 17, false, () -> { target = targets.get((index + 1) % targets.size()).id(); rebuild(); }).active = !targets.isEmpty();
-        if (!compactActions || actionGroup == ActionGroup.MANEUVERS) {
-            quickActions(x, targetY + (compactActions ? 18 : 20), w, turn);
-            if (compactActions) return;
+        if (actionGroup == ActionGroup.MANEUVERS) {
+            quickActions(x, targetY + 18, w, turn);
+            return;
         }
-        int featureY = targetY + (compactActions ? 18 : 60);
+        int featureY = targetY + 18;
         var features = FEATURES.stream().filter(feature -> feature.capacity(presented.classLevels(),
                 Ability.modifier(presented.score(Ability.CHARISMA)), presented.race()) > 0).toList();
         int featureRows = Math.max(1, (bodyBottom() - featureY) / 19);
@@ -223,7 +232,7 @@ public final class CharacterSheetScreen extends DndScreen {
         }
     }
 
-    private int actionStart() { return bodyTop() + (shortLayout() ? 17 : 0); }
+    private int actionStart() { return bodyTop() + 17; }
 
     private void quickActions(int x, int y, int w, boolean turn) {
         int quickWidth = (w - 12) / 4;
@@ -241,9 +250,12 @@ public final class CharacterSheetScreen extends DndScreen {
 
     private void weaponButtons(int x, int y, int w, int spacing) {
         int labelWidth = w * 3 / 10, buttonWidth = (w - labelWidth - 8) / 2;
-        for (Weapon weapon : Weapon.values()) {
-            int wy = y + weapon.ordinal() * spacing;
-            if (!PlayerWeaponProfiles.available(minecraft.player, weapon)) continue;
+        var equipped = equippedWeapons();
+        int perPage = Math.max(1, (bodyBottom() - y) / spacing);
+        pages(equipped.size(), perPage);
+        for (int i = page * perPage; i < Math.min(equipped.size(), (page + 1) * perPage); i++) {
+            Weapon weapon = equipped.get(i);
+            int wy = y + (i - page * perPage) * spacing;
             var profile = PlayerWeaponProfiles.tabletop(minecraft.player, presented, weapon);
             boolean canPower = PlayerWeaponProfiles.canPower(presented, profile);
             boolean powered = canPower && power.contains(weapon);
@@ -258,6 +270,12 @@ public final class CharacterSheetScreen extends DndScreen {
                     x + labelWidth + buttonWidth + 4, wy, buttonWidth, 18, crit, powered);
         }
     }
+
+    private List<Weapon> equippedWeapons() {
+        return java.util.Arrays.stream(Weapon.values()).filter(weapon -> PlayerWeaponProfiles.available(minecraft.player, weapon)).toList();
+    }
+
+    private int catalogRows() { return Math.max(1, (bodyBottom() - actionStart()) / 13); }
 
     private void feature(ClassFeature feature) {
         switch (feature) {
@@ -304,7 +322,7 @@ public final class CharacterSheetScreen extends DndScreen {
             int sides = TabletopRolls.DICE.get(i);
             int count = diceSides == sides ? diceCount : 1;
             var die = pill(Component.literal((count == 1 ? "" : Integer.toString(count)) + "d" + sides), x + i * (dieWidth + 4),
-                    bottom() - 87, dieWidth, 17, count > 1, () -> {
+                    bottom() - (tinyLayout() ? 43 : 87), dieWidth, 17, count > 1, () -> {
                         TabletopActions.roll(new Check(Kind.DICE, count + "d" + sides), false);
                         diceCount = 1; rebuild();
                     }).rightClick(() -> {
@@ -385,7 +403,45 @@ public final class CharacterSheetScreen extends DndScreen {
         return result;
     }
 
+    private int journalRows() { return Math.max(1, (bodyBottom() - bodyTop() - 23) / 13); }
+
+    private void journalControls() {
+        int x = left + 12;
+        journalCount = ClientDndState.journal().size();
+        pages(journalCount, journalRows());
+        journalInput = edit("journal.notes", journalDraft == null ? java.util.Objects.toString(ClientDndState.journalNotes(), "") : journalDraft,
+                x, bodyTop(), innerWidth() - 68, net.dnd5ecraft.network.Protocol.JOURNAL_NOTES_LIMIT);
+        journalInput.setHint(text("journal.notes"));
+        journalInput.setResponder(value -> journalDraft = value);
+        button(text("journal.save"), x + innerWidth() - 63, bodyTop(), 63, () -> {
+            if (ClientPacketHandlers.send(Action.JOURNAL_NOTES, out -> out.writeUtf(journalInput.getValue(),
+                    net.dnd5ecraft.network.Protocol.JOURNAL_NOTES_LIMIT))) {
+                journalDraft = null;
+                ClientDndState.notify(text("journal.saved"));
+            }
+        });
+    }
+
+    private void journalContent(GuiGraphics g) {
+        var entries = ClientDndState.journal();
+        int y = bodyTop() + 23;
+        if (entries.isEmpty()) clipped(g, font, text("journal.empty"), left + 12, y, innerWidth(), MUTED);
+        for (int i = page * journalRows(); i < Math.min(entries.size(), (page + 1) * journalRows()); i++, y += 13) {
+            clipped(g, font, entries.get(i), left + 12, y, innerWidth(), TEXT);
+        }
+    }
+
     @Override protected void tickInWorld() {
+        if (tab == Tab.JOURNAL) {
+            if (++journalRefresh % 30 == 0) ClientPacketHandlers.send(Action.JOURNAL);
+            if (journalCount != ClientDndState.journal().size()) rebuild();
+            else if (journalDraft == null && ClientDndState.journalNotes() != null && journalInput != null
+                    && !journalInput.getValue().equals(ClientDndState.journalNotes())) {
+                journalInput.setValue(ClientDndState.journalNotes());
+                journalDraft = null;
+            }
+            return;
+        }
         if (!java.util.Objects.equals(presented, ClientDndState.sheet()) || !java.util.Objects.equals(combatSnapshot, ClientDndState.combat())
                 || tabletop != ClientDndState.tabletop() || activeRest != ClientDndState.shortRest() || inspired != ClientDndState.inspiration()
                 || lastHitFlags != lastHitFlags()
@@ -409,17 +465,33 @@ public final class CharacterSheetScreen extends DndScreen {
         } else if (tab == Tab.INVENTORY) {
             var rows = inventory().stream().skip((long) page * rowCount()).limit(rowCount()).toList();
             for (int i = 0; i < rows.size(); i++) clipped(g, font, rows.get(i), x, y + i * 13, w, TEXT);
-        } else if (tab == Tab.ACTIONS && minecraft.player != null && (!shortLayout() || actionGroup == ActionGroup.WEAPONS)) {
+        } else if (tab == Tab.ACTIONS && actionGroup == ActionGroup.WEAPONS) {
             y = actionStart();
-            int spacing = shortLayout() ? 18 : 21;
-            for (Weapon weapon : Weapon.values()) {
-                if (!PlayerWeaponProfiles.available(minecraft.player, weapon)) {
-                    clipped(g, font, name("tabletop.weapon", weapon), x + 4, y + weapon.ordinal() * spacing + 5, w / 3, MUTED);
-                } else if (!PlayerWeaponProfiles.canPower(presented, PlayerWeaponProfiles.tabletop(minecraft.player, presented, weapon))) {
-                    clipped(g, font, PlayerWeaponProfiles.label(minecraft.player, weapon), x + 4, y + weapon.ordinal() * spacing + 5, w * 3 / 10 - 6, TEXT);
+            int perPage = Math.max(1, (bodyBottom() - y) / 18);
+            var equipped = equippedWeapons();
+            for (int i = page * perPage; i < Math.min(equipped.size(), (page + 1) * perPage); i++) {
+                Weapon weapon = equipped.get(i);
+                if (!PlayerWeaponProfiles.canPower(presented, PlayerWeaponProfiles.tabletop(minecraft.player, presented, weapon))) {
+                    clipped(g, font, PlayerWeaponProfiles.label(minecraft.player, weapon), x + 4,
+                            y + (i - page * perPage) * 18 + 5, w * 3 / 10 - 6, TEXT);
                 }
             }
+        } else if (tab == Tab.ACTIONS && actionGroup == ActionGroup.CATALOG) {
+            var catalog = net.dnd5ecraft.rules.equipment.WeaponStatsRegistry.Weapon.values();
+            int start = page * catalogRows();
+            for (int i = start; i < Math.min(catalog.length, start + catalogRows()); i++) {
+                var weapon = catalog[i];
+                var id = weapon.name().toLowerCase(java.util.Locale.ROOT);
+                var damage = weapon.stats().damage();
+                String dice = damage.count() == 0 ? Integer.toString(weapon.stats().flatDamage()) : damage.count() + "d" + damage.sides();
+                var type = weapon.stats().damageType().map(value -> name("damage", value)).orElse(text("catalog.special"));
+                clipped(g, font, text("catalog.weapon", Component.translatable("item.dnd-5e-craft." + id), dice, type),
+                        x + 4, actionStart() + (i - start) * 13, w - 8, TEXT);
+            }
+        } else if (tab == Tab.JOURNAL) {
+            journalContent(g);
         }
+        if (tinyLayout() || tab == Tab.JOURNAL) return;
         var player = minecraft.player;
         var feed = ClientDndState.tabletopResults().stream().filter(result -> result.card().roller().equals(player.getUUID())).toList();
         int first = Math.max(0, feed.size() - 3);

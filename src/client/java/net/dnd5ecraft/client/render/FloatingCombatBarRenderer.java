@@ -8,7 +8,6 @@ import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.RenderType;
-import net.minecraft.network.chat.Component;
 
 import static net.dnd5ecraft.client.gui.theme.DndUiTheme.*;
 
@@ -31,23 +30,32 @@ public final class FloatingCombatBarRenderer {
             matrices.pushPose();
             double delta = context.tickDelta();
             matrices.translate(net.minecraft.util.Mth.lerp(delta, entity.xOld, entity.getX()) - camera.x,
-                    net.minecraft.util.Mth.lerp(delta, entity.yOld, entity.getY()) - camera.y + entity.getBbHeight() + .36,
+                    net.minecraft.util.Mth.lerp(delta, entity.yOld, entity.getY()) - camera.y + entity.getBbHeight() + .36 + hornClearance(entity),
                     net.minecraft.util.Mth.lerp(delta, entity.zOld, entity.getZ()) - camera.z);
             matrices.mulPose(context.camera().rotation());
-            matrices.scale(.025f, -.025f, .025f);
+            matrices.scale(-.025f, -.025f, .025f);
             int accent = info.id().equals(combat.activeActor()) ? GOLD : CombatHudView.allied(combat, info) ? EMERALD : CRIMSON;
-            var buffer = context.consumers().getBuffer(RenderType.debugQuads());
+            var buffer = context.consumers().getBuffer(RenderType.entityTranslucent(WorldDrawing.WHITE));
             double fill = 42 * CombatHudView.healthFraction(info.hp(), info.maxHp());
-            rectangle(matrices, buffer, -21, -10, 21, -5, 0xD80A0B0E);
-            if (fill > 0) rectangle(matrices, buffer, -21, -9, -21 + fill, -6, accent);
+            rectangle(matrices, buffer, -21, -10, 21, -5, 0, 0xD80A0B0E);
+            if (fill > 0) rectangle(matrices, buffer, -21, -9, -21 + fill, -6, -.02, accent);
             WorldDrawing.label(matrices, context.consumers(), text("render.health_armor", info.hp(), info.armor()), 1, TEXT, 0xDB0A0B0E);
             matrices.popPose();
         }
     }
 
+    private static float hornClearance(net.minecraft.world.entity.Entity entity) {
+        if (!(entity instanceof net.dnd5ecraft.server.PlayerCharacter player) || !player.dnd5e$showsCosmetics()
+                || player.dnd5e$disguise() != 0) return 0;
+        return switch (player.dnd5e$race()) {
+            case MINOTAUR, TIEFLING, DRAGONBORN -> .34f * player.dnd5e$physicalScale();
+            default -> 0;
+        };
+    }
+
     private static void rectangle(com.mojang.blaze3d.vertex.PoseStack pose, com.mojang.blaze3d.vertex.VertexConsumer buffer,
-            double left, double top, double right, double bottom, int color) {
-        WorldDrawing.quad(pose, buffer, new Vec3(left, top, 0), new Vec3(left, bottom, 0),
-                new Vec3(right, bottom, 0), new Vec3(right, top, 0), color);
+            double left, double top, double right, double bottom, double z, int color) {
+        WorldDrawing.surface(pose, buffer, new Vec3(0, 0, -1), new Vec3(left, top, z), new Vec3(left, bottom, z),
+                new Vec3(right, bottom, z), new Vec3(right, top, z), color);
     }
 }

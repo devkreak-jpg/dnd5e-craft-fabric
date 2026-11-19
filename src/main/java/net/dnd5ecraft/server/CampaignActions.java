@@ -47,12 +47,12 @@ public final class CampaignActions {
         switch (focus) {
             case CANNON -> {
                 var cannon = companion(player, EldritchCannonEntity.class);
-                if (cannon == null) summonCannon(player, pos);
+                if (cannon == null) perform(player, Action.CANNON_SUMMON, null, pos, 0);
                 else if (player.isShiftKeyDown()) perform(player, Action.CANNON_MODE, null, null, 0);
                 else perform(player, Action.CANNON_FIRE, null, null, 0);
             }
             case ECHO -> perform(player, companion(player, EchoAvatarEntity.class) == null
-                    ? Action.ECHO_MANIFEST : pos == null ? Action.ECHO_SWAP : Action.ECHO_MOVE, null, pos, 0);
+                    ? Action.ECHO_MANIFEST : player.isShiftKeyDown() ? Action.ECHO_SWAP : Action.ECHO_MOVE, null, pos, 0);
             case CHAOS -> {
                 requireHero(player, CampaignHero.HARLEQUIN);
                 CampaignMagic.visual(player.serverLevel(), player.position().add(0, 1.4, 0), ParticleTypes.WITCH,
@@ -99,22 +99,25 @@ public final class CampaignActions {
                 requireHero(player, CampaignHero.MINOTAUR);
                 if (companion(player, EchoAvatarEntity.class) != null) throw new IllegalStateException("An echo already exists");
                 var echo = ModEntities.ECHO_AVATAR.create(player.serverLevel());
-                int armor = CampaignRules.echoArmor(ProficiencyLevel.bonusAtLevel(sheet.level()));
-                echo.getAttribute(Attributes.ARMOR).setBaseValue(armor - 10);
+                if (echo == null) throw new IllegalStateException("Echo could not be created");
+                echo.getAttribute(Attributes.ARMOR).setBaseValue(EchoAvatarEntity.armorAttribute(ProficiencyLevel.bonusAtLevel(sheet.level())));
                 echo.setItemSlot(EquipmentSlot.MAINHAND, player.getMainHandItem().copy());
                 echo.setDropChance(EquipmentSlot.MAINHAND, 0);
-                prepare(player, echo, point, 3);
-                consume(player, Resource.BONUS_ACTION);
+                if (!prepare(player, echo, point, 3)) return;
+                spendEchoBonus(player);
                 player.serverLevel().addFreshEntity(echo);
                 smoke(player, echo.position());
             }
             case ECHO_MOVE -> {
                 var echo = requireCompanion(player, EchoAvatarEntity.class, CampaignHero.MINOTAUR);
-                if (point == null || echo.position().distanceToSqr(Vec3.atBottomCenterOf(point)) > 36) {
-                    throw new IllegalArgumentException("Echo movement is limited to six blocks");
+                var destination = point == null ? companionGround(player, echo, 3) : point;
+                if (destination == null || echo.position().distanceToSqr(Vec3.atBottomCenterOf(destination)) > 36
+                        || !canPlace(player, echo, destination)) {
+                    groundHint(player);
+                    return;
                 }
                 if (TacticalCombat.isLocked(player)) TacticalCombat.require(player).campaignEchoMove(player.getUUID(), TacticalCombat.now());
-                place(player, echo, point);
+                place(player, echo, destination);
             }
             case ECHO_SWAP -> {
                 var echo = requireCompanion(player, EchoAvatarEntity.class, CampaignHero.MINOTAUR);
@@ -125,7 +128,17 @@ public final class CampaignActions {
                     throw new IllegalArgumentException("Echo destination is blocked");
                 }
                 if (TacticalCombat.isLocked(player)) TacticalCombat.swapEcho(player, echo.blockPosition());
-                else player.connection.teleport(end.x, end.y, end.z, player.getYRot(), player.getXRot());
+                else {
+                    int speed = new net.dnd5ecraft.rules.conditions.ConditionEffectApplier(
+                            sheet.conditions().stream().map(condition -> condition.type()).collect(java.util.stream.Collectors.toSet()),
+                            sheet.exhaustion()).speedFeet(sheet.race().walkingFeet() - TacticalCombat.armorFormula(player, sheet)
+                                    .speedPenaltyFeet(sheet.score(Ability.STRENGTH), sheet.race() == net.dnd5ecraft.rules.character.RaceType.DWARF));
+                    int cost = CampaignRules.echoSwapCostFeet();
+                    if (speed < cost) throw new IllegalStateException("Echo swap needs fifteen feet of movement");
+                    spendEchoBonus(player);
+                    CampaignPhysics.chargeEchoMovement(player, cost / (double) speed);
+                    player.connection.teleport(end.x, end.y, end.z, player.getYRot(), player.getXRot());
+                }
                 echo.setPos(start);
                 smoke(player, start);
                 smoke(player, end);
@@ -152,10 +165,11 @@ public final class CampaignActions {
     private static void summonCannon(ServerPlayer player, BlockPos point) {
         var sheet = requireHero(player, CampaignHero.FINNEAS);
         var cannon = ModEntities.ELDRITCH_CANNON.create(player.serverLevel());
+        if (cannon == null) throw new IllegalStateException("Cannon could not be created");
         int hp = CampaignRules.cannonHealth(sheet.classLevels().getOrDefault(ClassType.ARTIFICER, 0));
         cannon.getAttribute(Attributes.MAX_HEALTH).setBaseValue(hp);
         cannon.setHealth(hp);
-        prepare(player, cannon, point, 3);
+        if (!prepare(player, cannon, point, 3)) return;
         CharacterSheetDataPayment payment = payment(player);
         consume(player, Resource.ACTION);
         if (TacticalCombat.isLocked(player)) {
@@ -199,8 +213,10 @@ public final class CampaignActions {
             case FORCE_BALLISTA -> {
                 var end = shot.position().add(0, shot.getBbHeight() / 2, 0);
                 beam(player, center, end, ParticleTypes.ELECTRIC_SPARK);
-                if (TacticalCombat.campaignAttackHits(player, shot, proficiency + mod)) {
-                    TacticalCombat.campaignDamage(player, shot, DamageType5e.FORCE, dice(player, 2, 8));
+                var outcome = TacticalCombat.campaignAttack(player, shot, proficiency + mod);
+                if (outcome != net.dnd5ecraft.rules.equipment.DamagePipeline.AttackOutcome.MISS) {
+                    boolean critical = outcome == net.dnd5ecraft.rules.equipment.DamagePipeline.AttackOutcome.CRITICAL;
+                    TacticalCombat.campaignDamage(player, shot, DamageType5e.FORCE, dice(player, critical ? 4 : 2, 8), critical);
                     TacticalCombat.campaignPush(player, shot, 1, center);
                 }
                 player.serverLevel().playSound(null, cannon.blockPosition(), SoundEvents.GUARDIAN_ATTACK, SoundSource.PLAYERS, .7f, 1.25f);
@@ -244,15 +260,31 @@ public final class CampaignActions {
     private static LivingEntity target(ServerPlayer player, UUID id, Vec3 origin, double range) {
         if (id != null) {
             if (player.serverLevel().getEntity(id) instanceof LivingEntity entity && entity.isAlive()
-                    && entity.position().distanceToSqr(origin) <= range * range && !TacticalCombat.allied(player, entity)) return entity;
+                    && !(entity instanceof CampaignCompanion) && entity.position().distanceToSqr(origin) <= range * range && !TacticalCombat.allied(player, entity)) return entity;
             throw new IllegalArgumentException("Target is out of range");
         }
         var look = player.getViewVector(1);
-        return player.serverLevel().getEntitiesOfClass(LivingEntity.class, player.getBoundingBox().inflate(range + 6),
+        return player.serverLevel().getEntitiesOfClass(LivingEntity.class, companionTargetBounds(origin, range),
                 entity -> entity.isAlive() && !(entity instanceof CampaignCompanion) && !TacticalCombat.allied(player, entity)
                         && entity.position().distanceToSqr(origin) <= range * range
-                        && entity.getEyePosition().subtract(player.getEyePosition()).normalize().dot(look) > .96)
-                .stream().min(Comparator.comparingDouble(entity -> entity.distanceToSqr(player))).orElseThrow(() -> new IllegalArgumentException("Aim at an enemy"));
+                        && entity.getEyePosition().subtract(origin).normalize().dot(look) > .96)
+                .stream().min(Comparator.comparingDouble(entity -> entity.distanceToSqr(origin))).orElseThrow(() -> new IllegalArgumentException("Aim at an enemy"));
+    }
+
+    static net.minecraft.world.phys.AABB companionTargetBounds(Vec3 origin, double range) {
+        return new net.minecraft.world.phys.AABB(origin, origin).inflate(range);
+    }
+
+    private static void spendEchoBonus(ServerPlayer player) {
+        if (TacticalCombat.isLocked(player)) {
+            consume(player, Resource.BONUS_ACTION);
+        } else {
+            PlayerRules.requireDowntime(player);
+            if (player.getCooldowns().isOnCooldown(ModItems.ECHO_SIGIL)) {
+                throw new IllegalStateException("Echo bonus action is recovering");
+            }
+            player.getCooldowns().addCooldown(ModItems.ECHO_SIGIL, 120);
+        }
     }
 
     private static void consume(ServerPlayer player, Resource resource) {
@@ -261,8 +293,17 @@ public final class CampaignActions {
     }
 
     public static <T extends CampaignCompanion> T companion(ServerPlayer player, Class<T> kind) {
-        return player.serverLevel().getEntitiesOfClass(kind, player.getBoundingBox().inflate(64),
-                entity -> entity.isAlive() && entity.ownerId().filter(player.getUUID()::equals).isPresent()).stream().findFirst().orElse(null);
+        return findCompanion(player.serverLevel().getAllEntities(), player.getUUID(), kind);
+    }
+
+    static <T extends CampaignCompanion> T findCompanion(Iterable<net.minecraft.world.entity.Entity> entities, UUID owner, Class<T> kind) {
+        for (var entity : entities) {
+            if (kind.isInstance(entity) && entity.isAlive()) {
+                var candidate = kind.cast(entity);
+                if (candidate.ownerId().filter(owner::equals).isPresent()) return candidate;
+            }
+        }
+        return null;
     }
 
     private static <T extends CampaignCompanion> T requireCompanion(ServerPlayer player, Class<T> kind, CampaignHero hero) {
@@ -276,20 +317,46 @@ public final class CampaignActions {
         return PlayerSheets.get(player).filter(hero::matches).orElseThrow(() -> new IllegalStateException("This character lacks the campaign feature"));
     }
 
-    private static void prepare(ServerPlayer player, CampaignCompanion entity, BlockPos point, int range) {
+    private static boolean prepare(ServerPlayer player, CampaignCompanion entity, BlockPos point, int range) {
         if (entity == null) throw new IllegalStateException("Companion could not be created");
-        var pos = point == null ? player.blockPosition().relative(player.getDirection()) : point;
-        if (Vec3.atBottomCenterOf(pos).distanceToSqr(player.position()) > range * range) throw new IllegalArgumentException("Companion position is out of range");
+        var pos = point == null ? companionGround(player, entity, range) : point;
+        if (pos == null || Vec3.atBottomCenterOf(pos).distanceToSqr(player.position()) > range * range
+                || !canPlace(player, entity, pos)) {
+            groundHint(player);
+            return false;
+        }
         entity.bind(player);
         place(player, entity, pos);
+        return true;
+    }
+
+    public static BlockPos companionGround(ServerPlayer player, CampaignCompanion entity, int range) {
+        var facing = player.getLookAngle().multiply(1, 0, 1).normalize();
+        if (facing.lengthSqr() < 1e-8) facing = Vec3.atLowerCornerOf(player.getDirection().getNormal());
+        for (int step = range; step >= 1; step--) {
+            var column = BlockPos.containing(player.position().add(facing.scale(step)));
+            for (int offset : new int[]{0, -1, 1, -2, -3}) {
+                var spot = column.offset(0, offset, 0);
+                if (Vec3.atBottomCenterOf(spot).distanceToSqr(player.position()) <= range * range
+                        && canPlace(player, entity, spot)) return spot;
+            }
+        }
+        return null;
+    }
+
+    private static boolean canPlace(ServerPlayer player, CampaignCompanion entity, BlockPos pos) {
+        var level = player.serverLevel();
+        return level.isLoaded(pos) && !level.isOutsideBuildHeight(pos) && level.getWorldBorder().isWithinBounds(pos)
+                && level.getBlockState(pos.below()).isFaceSturdy(level, pos.below(), net.minecraft.core.Direction.UP)
+                && level.noCollision(entity, entity.getBoundingBox().move(Vec3.atBottomCenterOf(pos).subtract(entity.position())));
+    }
+
+    private static void groundHint(ServerPlayer player) {
+        player.displayClientMessage(Component.translatable("dnd-5e-craft.ui.campaign.companion_ground"), true);
     }
 
     private static void place(ServerPlayer player, CampaignCompanion entity, BlockPos pos) {
-        if (!player.level().isLoaded(pos) || !player.level().getWorldBorder().isWithinBounds(pos)) throw new IllegalArgumentException("Invalid position");
         var center = Vec3.atBottomCenterOf(pos);
-        if (!player.level().noCollision(entity, entity.getBoundingBox().move(center.subtract(entity.position())))) {
-            throw new IllegalArgumentException("Companion position is blocked");
-        }
         entity.moveTo(center.x, center.y, center.z, player.getYRot(), 0);
     }
 

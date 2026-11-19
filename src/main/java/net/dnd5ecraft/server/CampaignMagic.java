@@ -29,12 +29,11 @@ import net.minecraft.world.phys.Vec3;
 public final class CampaignMagic {
     private record Fog(UUID caster, Vec3 center, long expiry) {}
     private static final Map<ServerLevel, List<Fog>> CLOUDS = new HashMap<>();
-    private static final Map<UUID, Long> DISGUISES = new HashMap<>();
 
     private CampaignMagic() {}
 
     public static void register() {
-        ServerLifecycleEvents.SERVER_STOPPED.register(server -> { CLOUDS.clear(); DISGUISES.clear(); });
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> CLOUDS.clear());
         ServerTickEvents.END_WORLD_TICK.register(level -> {
             var clouds = CLOUDS.get(level);
             if (clouds != null) {
@@ -43,10 +42,11 @@ public final class CampaignMagic {
                 if (clouds.isEmpty()) CLOUDS.remove(level);
             }
             for (var player : level.players()) {
-                Long until = DISGUISES.get(player.getUUID());
-                if (until == null ? ((PlayerCharacter) player).dnd5e$disguise() != 0 : until <= level.getGameTime()) {
-                    DISGUISES.remove(player.getUUID());
-                    ((PlayerCharacter) player).dnd5e$disguise(0);
+                var character = (PlayerCharacter) player;
+                if (character.dnd5e$disguise() != 0
+                        && character.dnd5e$disguiseExpiresAt() <= level.getServer().overworld().getGameTime()) {
+                    character.dnd5e$disguise(0);
+                    character.dnd5e$disguiseExpiresAt(0);
                 }
             }
         });
@@ -79,7 +79,11 @@ public final class CampaignMagic {
                 }
                 pay(player, 0, null);
                 if (repair) stack.removeTagKey("DndBroken");
-                else receiver.heal(CampaignActions.dice(player, 2, 6));
+                else {
+                    float before = receiver.getHealth();
+                    receiver.heal(CampaignActions.dice(player, 2, 6));
+                    net.dnd5ecraft.network.StudioEffects.healed(receiver, Math.round(receiver.getHealth() - before));
+                }
                 visual(level, receiver.position().add(0, .6, 0), ParticleTypes.WAX_ON, SoundEvents.ANVIL_USE, 18);
             }
             case "message" -> {
@@ -105,7 +109,7 @@ public final class CampaignMagic {
                 pay(player, 1, null);
                 var character = (PlayerCharacter) player;
                 character.dnd5e$disguise(character.dnd5e$disguise() % 3 + 1);
-                DISGUISES.put(player.getUUID(), level.getGameTime() + 12_000);
+                character.dnd5e$disguiseExpiresAt(level.getServer().overworld().getGameTime() + 12_000);
                 visual(level, player.position().add(0, .85, 0), ParticleTypes.WITCH, SoundEvents.ILLUSIONER_MIRROR_MOVE, 32);
             }
             case "fog_cloud" -> {
@@ -126,6 +130,7 @@ public final class CampaignMagic {
             }
             default -> throw new IllegalArgumentException("Use the spellbook to cast this spell");
         }
+        if (!id.equals("message")) net.dnd5ecraft.network.StudioEffects.spell(player, id);
     }
 
     private static void pay(ServerPlayer player, int slot, ClassFeature free) {

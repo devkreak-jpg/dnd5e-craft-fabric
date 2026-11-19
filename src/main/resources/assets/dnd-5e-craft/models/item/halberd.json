@@ -1,5 +1,5 @@
 {
-  "parent": "minecraft:item/generated",
+  "parent": "minecraft:item/handheld",
   "textures": {
     "layer0": "dnd-5e-craft:item/halberd"
   },
@@ -8,68 +8,68 @@
       "rotation": [
         0,
         -90,
-        45
+        37
       ],
       "translation": [
         0,
-        2.2,
-        1.1
+        3.8,
+        1.2
       ],
       "scale": [
-        1.45,
-        1.45,
-        1.45
+        1.28,
+        1.28,
+        1.28
       ]
     },
     "thirdperson_lefthand": {
       "rotation": [
         0,
         90,
-        -45
+        -37
       ],
       "translation": [
         0,
-        2.2,
-        1.1
+        3.8,
+        1.2
       ],
       "scale": [
-        1.45,
-        1.45,
-        1.45
+        1.28,
+        1.28,
+        1.28
       ]
     },
     "firstperson_righthand": {
       "rotation": [
         0,
-        -80,
-        18
+        -90,
+        22
       ],
       "translation": [
-        1,
-        1,
-        1
+        1.4,
+        2.8,
+        1.2
       ],
       "scale": [
-        1.2035,
-        1.2035,
-        1.2035
+        0.8,
+        0.8,
+        0.8
       ]
     },
     "firstperson_lefthand": {
       "rotation": [
         0,
-        80,
-        -18
+        90,
+        -22
       ],
       "translation": [
-        -1,
-        1,
-        1
+        1.4,
+        2.8,
+        1.2
       ],
       "scale": [
-        1.2035,
-        1.2035,
-        1.2035
+        0.8,
+        0.8,
+        0.8
       ]
     },
     "ground": {

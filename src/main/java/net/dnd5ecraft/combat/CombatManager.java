@@ -89,9 +89,13 @@ public final class CombatManager {
         WEAPON_STRIKE, MOVE_MOONBEAM, RETARGET_MARK, BREAK_WEB, QUICKEN_SPELL, SORCERY_SLOT, OFFHAND, POWER_ATTACK, SMITE
     }
 
-    public enum EventType { TURN, MOVED, HIT, MISS, DAMAGE, HEAL, CAST, COUNTERED, CONCENTRATION_ENDED, DEATH_SAVE, BESTIARY, CAMPAIGN }
+    public enum EventType { TURN, MOVED, HIT, MISS, DAMAGE, HEAL, CAST, COUNTERED, CONCENTRATION_ENDED, DEATH_SAVE, BESTIARY, CAMPAIGN, DEFEATED, SAVE }
 
-    public record Event(EventType type, UUID actor, UUID target, String detail, int value) {}
+    public record Event(EventType type, UUID actor, UUID target, String detail, int value, DamageType5e damageType, boolean critical) {
+        public Event(EventType type, UUID actor, UUID target, String detail, int value) {
+            this(type, actor, target, detail, value, null, false);
+        }
+    }
 
     /** Aim is required for area spells. Choice is the condition to inflict or remove, or the damage type to resist. */
     public record CastRequest(String spellId, int slot, Pool pool, List<UUID> targets, Optional<Vec3> aim,
@@ -355,11 +359,30 @@ public final class CombatManager {
     }
 
     public boolean campaignSave(UUID receiver, Ability ability, int dc) { return save(encounter.require(receiver), ability, dc, 0, false, true); }
-    public boolean campaignHit(UUID source, UUID target, int bonus) {
+    public record AttackPreview(Cover cover, RollMode mode, int bonus, int distance, boolean inRange, int armor, int hp, int maxHp) {}
+
+    public AttackPreview previewAttack(UUID actorId, UUID targetId, int index, CombatantEntry outsider) {
+        var actor = encounter.require(actorId);
+        var target = encounter.find(targetId).orElse(outsider);
+        if (target == null || target.team() == actor.team() || index < 0 || index >= actor.stats().attacks().size()) return null;
+        var attack = actor.stats().attacks().get(index);
+        int distance = actor.cell().distanceFeet(target.cell());
+        boolean sharp = !attack.melee() && actor.feat(FeatType.SHARPSHOOTER);
+        var cover = cover(actor, target);
+        var flags = maneuvers.attackFlags(actor, target, !attack.melee(), maneuvers.weaponAdvantage(actor, target, attack),
+                !attack.melee() && !sharp && distance > attack.normalRangeFeet());
+        var mode = actor.advantageOnNextRoll ? RollMode.from(true, flags.mode() == RollMode.DISADVANTAGE) : flags.mode();
+        return new AttackPreview(sharp && !cover.blocksTargeting() ? Cover.NONE : cover, mode, attack.attackBonus(),
+                distance, attack.inRange(distance), target.armorClass(), target.hp.current(), target.hp.maximum());
+    }
+
+    public DamagePipeline.AttackOutcome campaignHit(UUID source, UUID target, int bonus) {
         var actor = encounter.require(source);
         var defender = encounter.require(target);
         var hit = maneuvers.rollAttack(actor, defender, bonus, true, false, false);
-        return hit.outcome() != DamagePipeline.AttackOutcome.MISS;
+        var outcome = hit.outcome();
+        event(outcome == DamagePipeline.AttackOutcome.MISS ? EventType.MISS : EventType.HIT, actor, defender, outcome.name(), hit.roll());
+        return outcome;
     }
 
     public void castTritonFog(UUID caster, Cell point, long time) { spells.castTritonFog(caster, point.center(), time); }
@@ -381,9 +404,11 @@ public final class CombatManager {
     public void campaignSwap(UUID actor, Cell destination, int cost, long time) {
         requireIdle(time);
         var entry = acting(actor);
-        if (!movementTerrain(entry, false).canOccupy(destination) || !entry.turn.move(cost, entry.speedFeet())) {
-            throw new IllegalArgumentException("Echo swap needs fifteen feet of movement and an open destination");
+        if (!movementTerrain(entry, false).canOccupy(destination) || !entry.turn.canSpend(Resource.BONUS_ACTION)
+                || !entry.turn.move(cost, entry.speedFeet())) {
+            throw new IllegalArgumentException("Echo swap needs a bonus action, fifteen feet of movement, and an open destination");
         }
+        entry.turn.spend(Resource.BONUS_ACTION);
         relocate(entry, destination);
     }
 
@@ -728,6 +753,17 @@ public final class CombatManager {
         complete.resume.accept(nowMillis);
     }
 
+    public Reaction commandReaction(UUID actor, Reaction requested) {
+        int slot = requested.slot();
+        if (slot == 0) return requested;
+        var user = encounter.require(actor);
+        if (user.slotsAvailable(Pool.REGULAR, slot) > 0) return requested;
+        for (int level = slot; level <= 9; level++) {
+            if (user.slotsAvailable(Pool.PACT, level) > 0) return new Reaction(requested.kind(), level, Pool.PACT);
+        }
+        return requested;
+    }
+
     public boolean answerReaction(long id, UUID reactor, Optional<Reaction> response, long nowMillis) {
         Objects.requireNonNull(response);
         tick(nowMillis);
@@ -827,8 +863,9 @@ public final class CombatManager {
                 && abilityOutcome(target, roll + target.stats().saveModifier(ability) + bonus + luck(target) + auraOfProtection(target), dc);
         if (!succeeds && state != null && world.useLegendaryResistance(target) && state.useLegendaryResistance()) {
             event(EventType.BESTIARY, target, target, "legendary_resistance", state.snapshot().legendaryResistances());
-            return true;
+            succeeds = true;
         }
+        event(EventType.SAVE, target, target, ability.name(), succeeds ? 1 : 0);
         return succeeds;
     }
 
@@ -899,7 +936,10 @@ public final class CombatManager {
                 && target.bestiary().filter(state -> state.preset() == BestiaryPreset.TROLL).isPresent()) {
             target.death = DeathSaveTracker.DYING;
         }
-        if (target.dead()) target.diedAtRound = encounter.round();
+        if (target.dead()) {
+            target.diedAtRound = encounter.round();
+            event(EventType.DEFEATED, source, target, "", 0);
+        }
         if (!target.canAct()) {
             endConcentration(target.id());
             maneuvers.releaseEndedGrapples();
@@ -908,7 +948,9 @@ public final class CombatManager {
             spells.checkConcentration(target, result.damageTaken(),
                     target.stats().saveModifier(Ability.CONSTITUTION) + luck(target) + auraOfProtection(target), save.mode());
         }
-        event(EventType.DAMAGE, source, target, "", result.damageTaken());
+        var type = result.adjustedDamage().entrySet().stream().max(Map.Entry.<DamageType5e, Integer>comparingByValue()
+                .thenComparing(Map.Entry::getKey)).map(Map.Entry::getKey).orElse(DamageType5e.BLUDGEONING);
+        events.add(new Event(EventType.DAMAGE, source.id(), target.id(), "", result.damageTaken(), type, critical));
         return result;
     }
 

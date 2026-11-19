@@ -32,9 +32,8 @@ public final class TacticalGridWorldRenderer {
         if (client.player == null || client.level == null || client.options.hideGui
                 || context.matrixStack() == null || context.consumers() == null) return;
         var combat = ClientDndState.combat();
-        var pings = ClientDndState.pings();
         var area = ClientActions.areaPreview();
-        if ((combat == null || !combat.ownsTurn()) && pings.isEmpty() && area == null) return;
+        if ((combat == null || !combat.ownsTurn()) && area == null) return;
         var matrices = context.matrixStack();
         var camera = context.camera().getPosition();
         matrices.pushPose();
@@ -70,13 +69,6 @@ public final class TacticalGridWorldRenderer {
                 }
             });
         }
-        for (var ping : pings) {
-            var buffer = context.consumers().getBuffer(RenderType.lines());
-            outline(matrices, buffer, ping.cell(), 1.07, GOLD);
-            Vec3 base = floorCenter(ping.cell());
-            WorldDrawing.segment(matrices, buffer, base.plus(new Vec3(0, .95, 0)), base.plus(new Vec3(0, 2, 0)), GOLD);
-            label(context, base.plus(new Vec3(0, 2.14, 0)), text("grid.ping", ping.player()), GOLD);
-        }
         matrices.popPose();
     }
 
@@ -85,7 +77,7 @@ public final class TacticalGridWorldRenderer {
         pose.pushPose();
         pose.translate(position.x(), position.y(), position.z());
         pose.mulPose(context.camera().rotation());
-        pose.scale(.023f, -.023f, .023f);
+        pose.scale(-.023f, -.023f, .023f);
         WorldDrawing.label(pose, context.consumers(), text, 0, color);
         pose.popPose();
     }

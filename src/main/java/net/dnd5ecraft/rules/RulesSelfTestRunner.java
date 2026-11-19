@@ -1,5 +1,6 @@
 package net.dnd5ecraft.rules;
 
+import net.dnd5ecraft.rules.campaign.TacticalFeedback;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -74,7 +75,31 @@ public final class RulesSelfTestRunner {
         runner.hardening();
         runner.tabletop();
         runner.campaign();
+        runner.studio();
         System.out.printf("%d assertions passed%n", runner.checks);
+    }
+
+    private void studio() {
+        int[] expected = {70, 91, 49, 5, 95};
+        RollMode[] modes = {RollMode.NORMAL, RollMode.ADVANTAGE, RollMode.DISADVANTAGE, RollMode.NORMAL, RollMode.NORMAL};
+        int[] armor = {15, 15, 15, 80, 1};
+        int[] bonus = {8, 8, 8, -5, 50};
+        for (int i = 0; i < modes.length; i++)
+            check("5e hit chance " + i, (long)expected[i], Math.round(100 * TacticalFeedback.hitChance(armor[i], bonus[i], modes[i])));
+        var limiter = new TacticalFeedback.PingLimiter();
+        check("first ping", true, limiter.take(0));
+        check("early ping", false, limiter.take(999_999_999));
+        check("one second ping", true, limiter.take(1_000_000_000));
+        check("ruler 5 blocks", 25, TacticalFeedback.rulerFeet(TacticalFeedback.rulerBlocks(4.9)));
+        try {
+            var atlas = javax.imageio.ImageIO.read(Path.of("src/main/resources/assets/dnd-5e-craft/textures/entity/racial_cosmetics_atlas.png").toFile());
+            check("64px RGBA atlas", List.of(64, 64, 4, true), List.of(atlas.getWidth(), atlas.getHeight(),
+                    atlas.getColorModel().getNumComponents(), atlas.getColorModel().hasAlpha()));
+            for (var renderer : List.of("Spinning3dDieRenderer", "FloatingCombatBarRenderer")) {
+                var file = Path.of("src/client/java/net/dnd5ecraft/client/render", renderer + ".java");
+                check("shader-safe " + renderer, false, Files.readString(file).contains("RenderType.debugQuads()"));
+            }
+        } catch (java.io.IOException invalid) { throw new AssertionError(invalid); }
     }
 
     private void campaign() {

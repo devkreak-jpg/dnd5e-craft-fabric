@@ -16,7 +16,7 @@ public abstract class GuiMixin {
     @Inject(method = "renderPlayerHealth", at = @At("HEAD"), cancellable = true)
     private void dnd5e$replacePlayerHealth(GuiGraphics graphics, CallbackInfo callback) {
         var client = Minecraft.getInstance();
-        if (ClientDndState.sheet() != null && client.getCameraEntity() == client.player && !client.player.isSpectator()) {
+        if (client.player != null && ClientDndState.sheet() != null && client.getCameraEntity() == client.player && !client.player.isSpectator()) {
             callback.cancel();
         }
     }

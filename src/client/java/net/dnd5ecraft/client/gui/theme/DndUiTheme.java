@@ -20,6 +20,25 @@ public final class DndUiTheme {
 
     private DndUiTheme() {}
 
+    public static final class UiAnim {
+        private UiAnim() {}
+
+        public static double easeOut(long started, int duration) {
+            double elapsed = Math.max(0, Math.min(1, (net.minecraft.Util.getMillis() - started) / (double) duration));
+            return 1 - Math.pow(1 - elapsed, 3);
+        }
+
+        public static int color(int from, int to, double fraction) {
+            int result = 0;
+            for (int shift = 0; shift <= 24; shift += 8) {
+                int base = from >>> shift & 255;
+                int end = to >>> shift & 255;
+                result |= (int) Math.round(base + (end - base) * fraction) << shift;
+            }
+            return result;
+        }
+    }
+
     public static Component text(String key, Object... args) { return Component.translatable("dnd-5e-craft.ui." + key, args); }
 
     public static Component name(String family, Enum<?> element) {
@@ -45,8 +64,13 @@ public final class DndUiTheme {
 
     public static void clipped(GuiGraphics g, Font font, Component value, int x, int y, int width, int color) {
         if (width <= 0) return;
-        g.enableScissor(x, y, x + width, y + 10);
-        g.drawString(font, value, x, y, color, false);
-        g.disableScissor();
+        if (font.width(value) <= width) {
+            g.drawString(font, value, x, y, color, false);
+            return;
+        }
+        int available = width - font.width("…");
+        if (available < 0) return;
+        String prefix = font.plainSubstrByWidth(value.getString(), available);
+        g.drawString(font, Component.literal(prefix + "…").withStyle(value.getStyle()), x, y, color, false);
     }
 }

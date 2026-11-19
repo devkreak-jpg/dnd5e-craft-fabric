@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "dnd-5e-craft:item/studded_leather_armor"
+  }
+}

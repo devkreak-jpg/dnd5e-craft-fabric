@@ -37,11 +37,33 @@ public final class PlayerRules {
         return new CheckResult(roll.kept().get(0), roll.modifier(), dc);
     }
 
+    public static CheckResult disarm(ServerPlayer player, int dc) {
+        return disarm(PlayerSheets.getOrCreate(player), dc, dice(player));
+    }
+
+    static CheckResult disarm(CharacterSheetData sheet, int dc, IntUnaryOperator roller) {
+        int modifier = sheet.skillModifier(Skill.SLEIGHT_OF_HAND);
+        boolean toolProficiency = sheet.background().tools().contains("thieves_tools");
+        var skillProficiency = sheet.skillProficiencies().getOrDefault(Skill.SLEIGHT_OF_HAND,
+                net.dnd5ecraft.rules.ability.ProficiencyLevel.NONE);
+        boolean advantage = toolProficiency && (skillProficiency == net.dnd5ecraft.rules.ability.ProficiencyLevel.PROFICIENT
+                || skillProficiency == net.dnd5ecraft.rules.ability.ProficiencyLevel.EXPERTISE);
+        if (toolProficiency) {
+            int toolBonus = Ability.modifier(sheet.score(Ability.DEXTERITY))
+                    + net.dnd5ecraft.rules.ability.ProficiencyLevel.bonusAtLevel(sheet.level());
+            modifier = Math.max(modifier, toolBonus);
+        }
+        var roll = new DiceRoller(roller).d20(RollMode.from(advantage, checkMode(sheet) == RollMode.DISADVANTAGE), modifier, lucky(sheet));
+        return new CheckResult(roll.kept().get(0), roll.modifier(), dc);
+    }
+
     public static CheckResult save(ServerPlayer player, Ability ability, int dc) {
         var sheet = PlayerSheets.getOrCreate(player);
         RollMode mode = RollMode.from(false, sheet.exhaustion().savingThrowDisadvantage());
         var roll = new DiceRoller(dice(player)).d20(mode, sheet.savingThrowModifier(ability), lucky(sheet));
-        return new CheckResult(roll.kept().get(0), roll.modifier(), dc);
+        var result = new CheckResult(roll.kept().get(0), roll.modifier(), dc);
+        if (dc > 0) net.dnd5ecraft.network.StudioEffects.status(player, result.succeeds() ? "saved" : "failed");
+        return result;
     }
 
     public static int passive(ServerPlayer player, Skill skill) {
@@ -132,6 +154,11 @@ public final class PlayerRules {
                 : sheet.shortRest(spendDie && sheet.hitPoints().current() < sheet.hitPoints().maximum() ? die : Optional.empty(), dice(player));
         if (!longRest) after = arcaneRecovery(after);
         PlayerSheets.set(player, after);
+        if (!longRest) {
+            int restored = after.hitPoints().current() - sheet.hitPoints().current();
+            net.dnd5ecraft.network.StudioEffects.rest(player, restored);
+            net.dnd5ecraft.network.StudioEffects.healed(player, restored);
+        }
         storage.recordRest(player.getUUID(), now, longRest);
         player.setHealth(Math.max(1, after.hitPoints().current()));
         ModPackets.notice(player, Component.translatable(longRest ? "dnd-5e-craft.rest.long_done" : "dnd-5e-craft.rest.short_done"));
@@ -154,6 +181,8 @@ public final class PlayerRules {
         PlayerSheets.set(player, sheet.withCombatState(hp, sheet.conditions(), sheet.deathSaves())
                 .withResources(sheet.resources().spendHitDie(type)));
         player.setHealth(Math.max(1, hp.current()));
+        net.dnd5ecraft.network.StudioEffects.rest(player, hp.current() - sheet.hitPoints().current());
+        net.dnd5ecraft.network.StudioEffects.healed(player, hp.current() - sheet.hitPoints().current());
         return new Outcome(java.util.List.of(roll), roll, con, total, type.hitDie(), RollMode.NORMAL, false);
     }
 

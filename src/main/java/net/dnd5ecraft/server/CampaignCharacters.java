@@ -37,6 +37,35 @@ public final class CampaignCharacters {
         ModPackets.sendSheet(player, true);
     }
 
+    static void giveGear(ServerPlayer player, CampaignHero hero) {
+        PlayerRules.requireDowntime(player);
+        switch (hero) {
+            case FINNEAS -> {
+                replaceEquipment(player, EquipmentSlot.MAINHAND, ModItems.REPEATING_LIGHT_CROSSBOW);
+                replaceEquipment(player, EquipmentSlot.OFFHAND, ModItems.SENTINEL_SHIELD);
+                replaceEquipment(player, EquipmentSlot.CHEST, ModItems.SCALE_MAIL);
+                give(player, ModItems.ELDRITCH_CANNON_CONTROLLER, ModItems.BAG_OF_HOLDING, ModItems.THIEVES_TOOLS);
+            }
+            case ALEXANDER -> {
+                replaceEquipment(player, EquipmentSlot.MAINHAND, ModItems.WORLDBREAKER_WRAPS);
+                give(player, ModItems.weapon(Weapon.HANDAXE), ModItems.weapon(Weapon.HANDAXE));
+            }
+            case HARLEQUIN -> replaceEquipment(player, EquipmentSlot.MAINHAND, ModItems.HARLEQUIN_DECK_WAND);
+            case MINOTAUR -> {
+                replaceEquipment(player, EquipmentSlot.MAINHAND, ModItems.weapon(Weapon.GREATAXE));
+                replaceEquipment(player, EquipmentSlot.CHEST, ModItems.SPLINT_ARMOR);
+                give(player, ModItems.ECHO_SIGIL);
+            }
+        }
+    }
+
+    private static void replaceEquipment(ServerPlayer player, EquipmentSlot slot, Item item) {
+        var previous = player.getItemBySlot(slot);
+        if (previous.is(item)) return;
+        player.setItemSlot(slot, item.getDefaultInstance());
+        if (!previous.isEmpty() && !player.addItem(previous)) player.drop(previous, false);
+    }
+
     private static void equip(ServerPlayer player, EquipmentSlot slot, Item item) {
         if (player.getItemBySlot(slot).isEmpty()) player.setItemSlot(slot, item.getDefaultInstance());
         else give(player, item);

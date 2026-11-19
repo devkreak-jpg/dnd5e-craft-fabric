@@ -16,9 +16,13 @@ public final class TriggerOccupancy {
     }
 
     public List<UUID> entrants(List<UUID> present, long gameTime) {
+        if (!armed || gameTime < nextActivation) {
+            // Retain only occupants whose entry was already processed and who have stayed inside.
+            inside = inside.stream().filter(present::contains).collect(java.util.stream.Collectors.toUnmodifiableSet());
+            return List.of();
+        }
         Set<UUID> previous = inside;
         inside = Set.copyOf(present);
-        if (!armed || gameTime < nextActivation) return List.of();
         return present.stream().distinct().filter(id -> !previous.contains(id)).toList();
     }
 

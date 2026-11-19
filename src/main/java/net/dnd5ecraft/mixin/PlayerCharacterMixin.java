@@ -10,6 +10,9 @@ import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.EntityDimensions;
+import net.minecraft.world.entity.Pose;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -29,7 +32,25 @@ public abstract class PlayerCharacterMixin implements PlayerCharacter {
             SynchedEntityData.defineId(Player.class, EntityDataSerializers.INT);
     @Unique private static final EntityDataAccessor<Integer> dnd5e$campaignFlags =
             SynchedEntityData.defineId(Player.class, EntityDataSerializers.INT);
+    @Unique private long dnd5e$disguiseExpiry;
+    @Unique private String dnd5e$journalNotes = "";
     @Unique private CharacterSheetData dnd5e$character;
+
+    @Inject(method = "getDimensions", at = @At("RETURN"), cancellable = true)
+    @Unique
+    private void dnd5e$playerDimensions(Pose pose, CallbackInfoReturnable<EntityDimensions> result) {
+        float scale = dnd5e$physicalScale();
+        if (scale != 1f) {
+            var base = result.getReturnValue();
+            result.setReturnValue(new EntityDimensions(base.width * scale, base.height * scale, base.fixed));
+        }
+    }
+
+    @Inject(method = "getStandingEyeHeight", at = @At("RETURN"), cancellable = true)
+    @Unique
+    private void dnd5e$playerEyes(Pose pose, EntityDimensions dimensions, CallbackInfoReturnable<Float> result) {
+        result.setReturnValue(result.getReturnValue() * dnd5e$physicalScale());
+    }
 
     @Inject(method = "defineSynchedData", at = @At("TAIL"))
     @Unique
@@ -100,18 +121,41 @@ public abstract class PlayerCharacterMixin implements PlayerCharacter {
         if (!dnd5e$player().level().isClientSide) dnd5e$player().getEntityData().set(dnd5e$disguiseData, appearance);
     }
 
+    @Override @Unique
+    public long dnd5e$disguiseExpiresAt() { return dnd5e$disguiseExpiry; }
+
+    @Override @Unique
+    public void dnd5e$disguiseExpiresAt(long expiresAt) { dnd5e$disguiseExpiry = expiresAt; }
+
+    @Override @Unique
+    public String dnd5e$journalNotes() { return dnd5e$journalNotes; }
+
+    @Override @Unique
+    public void dnd5e$journalNotes(String notes) {
+        dnd5e$journalNotes = net.dnd5ecraft.network.ModPackets.trim(notes, net.dnd5ecraft.network.Protocol.JOURNAL_NOTES_LIMIT);
+    }
+
     @Inject(method = "addAdditionalSaveData", at = @At("TAIL"))
     @Unique
     private void dnd5e$writeSheet(CompoundTag tag, CallbackInfo callback) {
         tag.putBoolean("DndCosmeticsHidden", !dnd5e$showsCosmetics());
+        tag.putInt("DndDisguise", dnd5e$disguise());
+        tag.putLong("DndDisguiseExpiry", dnd5e$disguiseExpiresAt());
+        tag.putInt("DndCampaignFlags", dnd5e$campaignFlags());
+        tag.putString("DndJournalNotes", dnd5e$journalNotes());
         if (dnd5e$character != null) tag.put("DndCharacter", dnd5e$character.toNbt());
     }
 
     @Inject(method = "readAdditionalSaveData", at = @At("TAIL"))
     @Unique
     private void dnd5e$readSheet(CompoundTag tag, CallbackInfo callback) {
+        if (dnd5e$player().level().isClientSide) return;
         dnd5e$setCosmetics(!tag.getBoolean("DndCosmeticsHidden"));
-        if (!tag.contains("DndCharacter", Tag.TAG_COMPOUND) || dnd5e$player().level().isClientSide) return;
+        dnd5e$disguise(net.minecraft.util.Mth.clamp(tag.getInt("DndDisguise"), 0, 3));
+        dnd5e$disguiseExpiresAt(Math.max(0, tag.getLong("DndDisguiseExpiry")));
+        dnd5e$campaignFlags(tag.getInt("DndCampaignFlags") & 0xF);
+        dnd5e$journalNotes(tag.getString("DndJournalNotes"));
+        if (!tag.contains("DndCharacter", Tag.TAG_COMPOUND)) return;
         try {
             dnd5e$setSheet(CharacterSheetData.fromNbt(tag.getCompound("DndCharacter")));
         } catch (IllegalArgumentException invalid) {

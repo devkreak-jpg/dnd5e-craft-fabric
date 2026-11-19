@@ -64,6 +64,7 @@ public final class ModPackets {
     public static final ResourceLocation UPDATE = Dnd5eCraftMod.id("update");
     public static final ResourceLocation TIMED_UPDATE = Dnd5eCraftMod.id("timed_update");
     public static final ResourceLocation TABLETOP = Dnd5eCraftMod.id("tabletop");
+    public static final ResourceLocation STUDIO = Dnd5eCraftMod.id("studio_fx");
     private static final Map<ServerGamePacketListenerImpl, PacketPolicy.RateLimit> LIMITS = new ConcurrentHashMap<>();
     private static final PlayerSessionStore<Session> SESSIONS = new PlayerSessionStore<>();
 
@@ -76,6 +77,8 @@ public final class ModPackets {
         Ritual ritual;
         Long pausedRitualTicks;
         boolean timed;
+        final net.dnd5ecraft.rules.campaign.TacticalFeedback.PingLimiter pings = new net.dnd5ecraft.rules.campaign.TacticalFeedback.PingLimiter();
+        final java.util.ArrayDeque<Component> journal = new java.util.ArrayDeque<>();
 
         void invalidateSnapshot() {
             state = null;
@@ -104,6 +107,10 @@ public final class ModPackets {
                     try {
                         PacketPolicy.require(action, player.hasPermissions(2), token,
                                 action.turn() ? TacticalCombat.turnToken(player) : null);
+                        if (action == Action.INSPECT_ATTACK) {
+                            execute.accept(player);
+                            return;
+                        }
                         if (action.turn() && action != Action.MOVE) TacticalCombat.cancelPath(player);
                         execute.accept(player);
                         sync(player);
@@ -250,6 +257,20 @@ public final class ModPackets {
                 yield player -> net.dnd5ecraft.server.PlayerRules.rest(player, longRest);
             }
             case PARTY -> ModPackets::sendParty;
+            case JOURNAL -> ModPackets::sendJournal;
+            case JOURNAL_NOTES -> {
+                var notes = buf.readUtf(Protocol.JOURNAL_NOTES_LIMIT);
+                if (notes.codePoints().anyMatch(Character::isISOControl)) throw new IllegalArgumentException("Invalid journal notes");
+                yield player -> {
+                    if (PlayerSheets.get(player).isEmpty()) throw new IllegalStateException("A character is required");
+                    ((net.dnd5ecraft.server.PlayerCharacter) player).dnd5e$journalNotes(notes);
+                    sendJournal(player);
+                };
+            }
+            case SPLIT_GOLD -> {
+                int gold = PacketPolicy.count(buf.readVarInt(), 10_000);
+                yield player -> net.dnd5ecraft.server.DmDirector.splitGold(player, gold);
+            }
             case MANEUVER -> {
                 var maneuver = readEnum(buf, CombatManager.Maneuver.class);
                 var target = buf.readBoolean() ? buf.readUUID() : null;
@@ -258,6 +279,36 @@ public final class ModPackets {
                 yield player -> {
                     var control = TacticalCombat.control(player);
                     control.manager().maneuver(control.actor(), maneuver, target, option, aim, TacticalCombat.now());
+                };
+            }
+            case C2S_TACTICAL_PING -> {
+                var point = new net.minecraft.world.phys.Vec3(buf.readDouble(), buf.readDouble(), buf.readDouble());
+                int entity = buf.readVarInt();
+                yield player -> {
+                    if (session(player).pings.take(System.nanoTime())) StudioEffects.ping(player, point, entity);
+                };
+            }
+            case INSPECT_ATTACK -> {
+                UUID target = buf.readUUID();
+                int index = PacketPolicy.count(buf.readVarInt(), 63);
+                var point = new net.minecraft.world.phys.Vec3(buf.readDouble(), buf.readDouble(), buf.readDouble());
+                yield player -> {
+                    var control = TacticalCombat.control(player);
+                    if (!control.actor().equals(player.getUUID())
+                            || !(player.serverLevel().getEntity(target) instanceof net.minecraft.world.entity.LivingEntity living)
+                            || StudioEffects.verify(player, point, living.getId(), 32) == null) return;
+                    var preview = TacticalCombat.inspect(player, living, index);
+                    if (preview == null) return;
+                    send(player, STUDIO, Update.S2C_INSPECT, out -> {
+                        out.writeUUID(target);
+                        out.writeVarInt(index);
+                        out.writeEnum(preview.cover());
+                        out.writeEnum(preview.mode());
+                        out.writeInt(preview.bonus());
+                        out.writeVarInt(preview.distance());
+                        out.writeBoolean(preview.inRange());
+                        out.writeVarInt(preview.armor()); out.writeVarInt(preview.hp()); out.writeVarInt(preview.maxHp());
+                    });
                 };
             }
             case PING -> {
@@ -431,12 +482,13 @@ public final class ModPackets {
     }
 
     private static void ping(ServerPlayer player, Cell cell) {
-        if (!(player.getCamera().pick(32, 1, false) instanceof BlockHitResult hit)
+        if (!session(player).pings.take(System.nanoTime())) return;
+        if (!(player.getCamera().pick(48, 1, false) instanceof BlockHitResult hit)
                 || hit.getType() != net.minecraft.world.phys.HitResult.Type.BLOCK || !hit.getBlockPos().equals(block(cell))) {
             throw new IllegalArgumentException("Ping requires a visible block");
         }
         for (ServerPlayer recipient : player.serverLevel().players()) {
-            if (player.distanceToSqr(recipient) <= 48 * 48) send(recipient, Update.PING, out -> {
+            if (recipient.distanceToSqr(hit.getLocation()) <= 96 * 96) send(recipient, Update.PING, out -> {
                 cell(out, cell);
                 out.writeUtf(trim(player.getGameProfile().getName(), 80), 80);
             });
@@ -707,7 +759,22 @@ public final class ModPackets {
         }));
     }
 
+    public static void recordJournal(ServerPlayer player, Component entry) {
+        var journal = session(player).journal;
+        if (journal.size() >= Protocol.JOURNAL_LIMIT) journal.removeLast();
+        journal.addFirst(entry.copy());
+    }
+
+    private static void sendJournal(ServerPlayer player) {
+        if (!supports(player)) return;
+        send(player, Update.JOURNAL, out -> {
+            out.writeUtf(((net.dnd5ecraft.server.PlayerCharacter) player).dnd5e$journalNotes(), Protocol.JOURNAL_NOTES_LIMIT);
+            writeList(out, List.copyOf(session(player).journal), FriendlyByteBuf::writeComponent);
+        });
+    }
+
     public static void banner(ServerPlayer player, Component title) {
+        recordJournal(player, Component.translatable("dnd-5e-craft.ui.journal.chapter", title));
         if (supports(player)) send(player, Update.CINEMATIC_BANNER, out -> out.writeComponent(title));
         else player.displayClientMessage(title, true);
     }
@@ -728,8 +795,12 @@ public final class ModPackets {
     public static void sendRoll(ServerPlayer player, int result) {
         Vec3 position = new Vec3(player.getX(), player.getY() + player.getBbHeight() + .55, player.getZ());
         Roll roll = new Roll(player.getUUID(), player.getGameProfile().getName(), position, result, player.getRandom().nextLong());
+        var entry = Component.translatable(result == 20 ? "dnd-5e-craft.ui.hud.roll_critical" : "dnd-5e-craft.ui.hud.roll",
+                player.getDisplayName(), result);
         for (ServerPlayer recipient : player.serverLevel().players()) {
-            if (player.distanceToSqr(recipient) <= 40 * 40) send(recipient, Update.ROLL, out -> roll(out, roll));
+            if (player.distanceToSqr(recipient) > 40 * 40) continue;
+            recordJournal(recipient, entry);
+            send(recipient, Update.ROLL, out -> roll(out, roll));
         }
     }
 

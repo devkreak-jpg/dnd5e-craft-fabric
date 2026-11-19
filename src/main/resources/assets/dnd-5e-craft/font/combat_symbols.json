@@ -1,0 +1,13 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "dnd-5e-craft:font/combat_symbols.png",
+      "ascent": 7,
+      "height": 8,
+      "chars": [
+        "🔥⚡💀✨❄🧠☠✦⚔💚"
+      ]
+    }
+  ]
+}

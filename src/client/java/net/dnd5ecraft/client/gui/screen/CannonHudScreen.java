@@ -5,13 +5,13 @@ import net.dnd5ecraft.client.ClientDndState;
 import net.dnd5ecraft.client.gui.hud.CombatHudOverlay;
 import net.dnd5ecraft.combat.TurnEconomy.Resource;
 import net.dnd5ecraft.entity.EldritchCannonEntity;
-import net.minecraft.client.gui.components.Button;
+import net.dnd5ecraft.client.gui.theme.TabletopButton;
 import net.minecraft.client.gui.screens.Screen;
 
 import static net.dnd5ecraft.client.gui.theme.DndUiTheme.text;
 
 public final class CannonHudScreen extends Screen {
-    private Button fire;
+    private TabletopButton fire;
 
     public CannonHudScreen() { super(text("campaign.action.cannon_fire")); }
 
@@ -20,10 +20,10 @@ public final class CannonHudScreen extends Screen {
         int x = control == null ? (width - 112) / 2 : control.x();
         int y = control == null ? height - 67 : control.y();
         int buttonWidth = control == null ? 112 : control.width();
-        fire = addRenderableWidget(Button.builder(getTitle(), ignored -> {
+        fire = addRenderableWidget(new TabletopButton(x, y, buttonWidth, 14, getTitle(), false, ignored -> {
             onClose();
             CampaignActionsScreen.fireCannon();
-        }).bounds(x, y, buttonWidth, 14).build());
+        }));
     }
 
     @Override public void tick() {

@@ -36,6 +36,7 @@ public final class PlayerSheets {
                 server.getPlayerList().getPlayers().forEach(PlayerSheets::tickDeathSaves));
         ServerPlayerEvents.COPY_FROM.register((previous, current, alive) -> {
             NEXT_DEATH_SAVE.remove(previous);
+            ((PlayerCharacter) current).dnd5e$journalNotes(((PlayerCharacter) previous).dnd5e$journalNotes());
             ((PlayerCharacter) current).dnd5e$setCosmetics(((PlayerCharacter) previous).dnd5e$showsCosmetics());
             get(previous).ifPresent(sheet -> {
                 set(current, sheet);
@@ -99,7 +100,20 @@ public final class PlayerSheets {
         var hp = sheet.hitPoints().heal(result.hitPointsRestored());
         set(player, sheet.withCombatState(hp, sheet.conditions(), result.tracker()));
         player.setHealth(Math.max(1, hp.current()));
+        announceDowntimeDeathState(player, sheet.deathSaves(), result.tracker());
         return roll;
+    }
+
+    static void announceDowntimeDeathState(ServerPlayer player, DeathSaveTracker before, DeathSaveTracker after) {
+        if (before.state() == after.state()) return;
+        String key = switch (after.state()) {
+            case DYING -> "dnd-5e-craft.combat.downtime_downed";
+            case DEAD -> "dnd-5e-craft.combat.downtime_dead";
+            default -> null;
+        };
+        if (key == null) return;
+        player.getServer().getPlayerList().broadcastSystemMessage(
+                net.minecraft.network.chat.Component.translatable(key, player.getDisplayName()), false);
     }
 
     private static int deathSaveDelay(ServerPlayer player) {

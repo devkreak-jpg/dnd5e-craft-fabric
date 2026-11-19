@@ -361,11 +361,8 @@ final class CombatManeuverResolver {
         Hit base;
         try {
             attacker.cell = origin;
-            boolean packAdvantage = attacker.bestiary().filter(state -> state.has(Feature.PACK_TACTICS)).isPresent()
-                    && encounter.initiativeOrder().stream().anyMatch(ally -> ally != attacker && ally.team() == attacker.team()
-                        && ally.canAct() && ally.cell().distanceFeet(defender.cell()) <= 5);
             base = rollAttack(attacker, defender, attack.attackBonus() - (power ? 5 : 0), !attack.melee(),
-                    packAdvantage || attack.melee() && attack.strengthBased() && attacker.reckless || defender.reckless,
+                    weaponAdvantage(attacker, defender, attack),
                     !attack.melee() && !ignoreCover && distance > attack.normalRangeFeet());
         } finally {
             attacker.cell = real;
@@ -491,13 +488,32 @@ final class CombatManeuverResolver {
         return rolls;
     }
 
+    boolean weaponAdvantage(CombatantEntry attacker, CombatantEntry defender, Attack attack) {
+        boolean packAdvantage = attacker.bestiary().filter(state -> state.has(Feature.PACK_TACTICS)).isPresent()
+                && encounter.initiativeOrder().stream().anyMatch(ally -> ally != attacker && ally.team() == attacker.team()
+                        && ally.canAct() && ally.cell().distanceFeet(defender.cell()) <= 5);
+        return packAdvantage || attack.melee() && attack.strengthBased() && attacker.reckless || defender.reckless;
+    }
+
     Hit rollAttack(CombatantEntry attacker, CombatantEntry defender, int bonus, boolean ranged,
             boolean advantage, boolean disadvantage) {
+        var flags = attackFlags(attacker, defender, ranged, advantage, disadvantage);
+        var roll = manager.rolledD20(attacker, flags.mode());
+        attacker.stealth = -1;
+        manager.spells().aidFor(attacker, defender).ifPresent(manager.spells()::consumeAid);
+        if (attacker.has(Effect.MOCKED)) attacker.effects.removeIf(effect -> effect.effect() == Effect.MOCKED);
+        if (defender.has(Effect.GUIDING_LIGHT)) defender.effects.removeIf(effect -> effect.effect() == Effect.GUIDING_LIGHT);
+        return new Hit(attacker, defender, roll.kept(), bonus + manager.luck(attacker), manager.cover(attacker, defender).bonus(),
+                flags.criticalOnHit(), roll.mode(), false, roll.dice().get(0), null);
+    }
+
+    net.dnd5ecraft.rules.conditions.ConditionEffectApplier.AttackEffect attackFlags(CombatantEntry attacker,
+            CombatantEntry defender, boolean ranged, boolean advantage, boolean disadvantage) {
         int distance = attacker.cell().distanceFeet(defender.cell());
         boolean guiding = defender.has(Effect.GUIDING_LIGHT);
         var helper = manager.spells().aidFor(attacker, defender);
         boolean mocked = attacker.has(Effect.MOCKED);
-        var flags = attacker.conditionEffects().attackAgainst(defender.conditionEffects(), distance,
+        return attacker.conditionEffects().attackAgainst(defender.conditionEffects(), distance,
                 manager.canSee(attacker, defender), defender.feat(FeatType.ALERT) || manager.canSee(defender, attacker),
                 attacker.originatingCondition(ConditionType.CHARMED, defender.id()), manager.frightSourceVisible(attacker),
                 advantage || guiding || defender.has(Effect.REVEALED) || helper.isPresent(),
@@ -505,13 +521,6 @@ final class CombatManeuverResolver {
                         || (ranged && adjacentHostile(attacker))
                         || (attacker.stats().traits().contains(Trait.UNDEAD) && attacker.effects.stream()
                             .anyMatch(effect -> effect.effect() == Effect.CHILLED_UNDEAD && effect.caster().equals(defender.id()))));
-        var roll = manager.rolledD20(attacker, flags.mode());
-        attacker.stealth = -1;
-        helper.ifPresent(manager.spells()::consumeAid);
-        if (mocked) attacker.effects.removeIf(effect -> effect.effect() == Effect.MOCKED);
-        if (guiding) defender.effects.removeIf(effect -> effect.effect() == Effect.GUIDING_LIGHT);
-        return new Hit(attacker, defender, roll.kept(), bonus + manager.luck(attacker), manager.cover(attacker, defender).bonus(),
-                flags.criticalOnHit(), roll.mode(), false, roll.dice().get(0), null);
     }
 
     void resolveHit(Hit hit, boolean prompt, long nowMillis, HitResolution effect, LongConsumer after) {

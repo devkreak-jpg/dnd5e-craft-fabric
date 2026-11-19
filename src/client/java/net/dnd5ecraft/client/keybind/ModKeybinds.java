@@ -24,7 +24,8 @@ import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 public final class ModKeybinds {
-    private static KeyMapping sheet, spellbook, roll, end, dm, console, ping, dash, disengage, stand, interact, decline, cancel, attackProfile, wheel, hotkeys, fireCannon;
+    public static KeyMapping PING;
+    private static KeyMapping sheet, spellbook, roll, end, dm, console, dash, disengage, stand, interact, decline, cancel, attackProfile, wheel, hotkeys, fireCannon;
     private static boolean showHotkeys = true;
     private static final EnumMap<Kind, KeyMapping> REACTIONS = new EnumMap<>(Kind.class);
     private static CameraType previousCamera;
@@ -38,7 +39,7 @@ public final class ModKeybinds {
         end = key("end", GLFW.GLFW_KEY_SPACE);
         dm = key("dm", GLFW.GLFW_KEY_M);
         console = key("console", GLFW.GLFW_KEY_N);
-        ping = key("ping", GLFW.GLFW_KEY_O);
+        PING = key("ping", GLFW.GLFW_KEY_O);
         wheel = key("action_wheel", GLFW.GLFW_KEY_V);
         hotkeys = key("hotkeys", GLFW.GLFW_KEY_F12);
         fireCannon = key("fire_cannon", GLFW.GLFW_KEY_P);
@@ -108,7 +109,7 @@ public final class ModKeybinds {
                     client.setScreen(new net.dnd5ecraft.client.gui.screen.DmDirectorScreen(null));
                 } else ClientActions.console();
             }
-            if (ping.consumeClick()) ClientActions.ping();
+            if (PING.consumeClick()) ClientActions.ping();
             if (cancel.consumeClick()) {
                 ClientActions.cancelAim();
                 net.dnd5ecraft.client.ClientCampaign.cancelPick();

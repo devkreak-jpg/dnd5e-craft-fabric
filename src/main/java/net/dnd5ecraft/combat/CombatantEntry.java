@@ -127,6 +127,7 @@ public final class CombatantEntry {
     UUID campaignLastHit;
     boolean campaignFist, campaignFury, reckless, campaignDash, echoMoved;
     int laughterRound;
+    boolean laughterClaimed;
     int chaosShift;
     private final Defenses defenses;
     private final ExhaustionLevel exhaustion;

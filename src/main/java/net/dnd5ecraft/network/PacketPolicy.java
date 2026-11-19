@@ -16,7 +16,8 @@ public final class PacketPolicy {
         TABLETOP_ROLL(false, false), DM_ROLL_REQUEST(true, false), DM_ROLL_ANSWER(false, false),
         TABLETOP_CHOOSE(false, false), TABLETOP_REST(false, false),
         CAMPAIGN_PRESET(false, false), CAMPAIGN_ACTION(false, false), CAMPAIGN_COSMETICS(false, false),
-        DIRECTOR(true, false), CAMPAIGN_SPELL(false, false), CAMPAIGN_POSE(false, false);
+        DIRECTOR(true, false), CAMPAIGN_SPELL(false, false), CAMPAIGN_POSE(false, false),
+        JOURNAL(false, false), JOURNAL_NOTES(false, false), SPLIT_GOLD(true, false), C2S_TACTICAL_PING(false, false), INSPECT_ATTACK(false, true);
 
         private final boolean operator;
         private final boolean turn;

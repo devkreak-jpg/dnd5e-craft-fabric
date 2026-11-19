@@ -99,7 +99,8 @@ final class MinecraftBattlefield implements CombatManager.Battlefield {
     }
 
     @Override public Cell echoCell(CombatantEntry actor) {
-        if (!(entities.get(actor.id()) instanceof net.minecraft.server.level.ServerPlayer player)) return null;
+        if (!(entities.get(actor.id()) instanceof net.minecraft.server.level.ServerPlayer player)
+                || PlayerSheets.get(player).filter(net.dnd5ecraft.rules.campaign.CampaignHero.MINOTAUR::matches).isEmpty()) return null;
         var echo = CampaignActions.companion(player, net.dnd5ecraft.entity.EchoAvatarEntity.class);
         return echo == null ? null : TacticalCombat.cell(echo.blockPosition());
     }

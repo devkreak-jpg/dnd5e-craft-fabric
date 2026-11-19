@@ -13,6 +13,10 @@ import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 public final class Dnd5eCraftClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
+        net.dnd5ecraft.client.render.SentinelShieldModel.register();
+        net.minecraft.client.renderer.item.ItemProperties.register(net.dnd5ecraft.item.ModItems.SENTINEL_SHIELD,
+                new net.minecraft.resources.ResourceLocation("blocking"),
+                (stack, level, wearer, seed) -> wearer != null && wearer.isUsingItem() && wearer.getUseItem() == stack ? 1 : 0);
         ClientPacketHandlers.register();
         ClientCampaign.register();
         ModKeybinds.register();
@@ -22,6 +26,9 @@ public final class Dnd5eCraftClient implements ClientModInitializer {
         EntityRendererRegistry.register(ModEntities.ECHO_AVATAR, net.dnd5ecraft.client.render.EchoAvatarRenderer::new);
         TacticalGridWorldRenderer.register();
         FloatingCombatBarRenderer.register();
+        net.dnd5ecraft.client.render.FloatingCombatTextRenderer.register();
+        net.dnd5ecraft.client.render.TacticalPingRenderer.register();
+        net.dnd5ecraft.client.render.ShortRestEffects.register();
         Spinning3dDieRenderer.register();
     }
 }

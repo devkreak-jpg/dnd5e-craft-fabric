@@ -21,7 +21,8 @@ public final class CrowdSpawnerStaffItem extends Item {
 
     private static CrowdTheme theme(ItemStack staff) {
         var themes = CrowdTheme.values();
-        return themes[Math.floorMod(staff.getOrCreateTag().getInt("CrowdTheme"), themes.length)];
+        var tag = staff.getTag();
+        return themes[tag == null ? 0 : Math.floorMod(tag.getInt("CrowdTheme"), themes.length)];
     }
 
     @Override public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
@@ -30,7 +31,7 @@ public final class CrowdSpawnerStaffItem extends Item {
         if (player instanceof ServerPlayer operator) {
             if (!WandSelections.allowed(operator)) return InteractionResultHolder.fail(staff);
             cycle(operator, staff);
-        }
+        } else if (!player.hasPermissions(2)) return InteractionResultHolder.fail(staff);
         return InteractionResultHolder.sidedSuccess(staff, level.isClientSide);
     }
 
@@ -42,7 +43,10 @@ public final class CrowdSpawnerStaffItem extends Item {
     }
 
     @Override public InteractionResult useOn(UseOnContext context) {
-        if (!(context.getPlayer() instanceof ServerPlayer operator)) return InteractionResult.SUCCESS;
+        if (!(context.getPlayer() instanceof ServerPlayer operator)) {
+            var player = context.getPlayer();
+            return player != null && player.hasPermissions(2) ? InteractionResult.SUCCESS : InteractionResult.FAIL;
+        }
         if (!WandSelections.allowed(operator)) return InteractionResult.FAIL;
         var staff = context.getItemInHand();
         if (operator.isShiftKeyDown()) {
@@ -52,14 +56,15 @@ public final class CrowdSpawnerStaffItem extends Item {
         var pos = context.getClickedPos().relative(context.getClickedFace());
         var crowd = theme(staff);
         var profile = crowd.random(new java.util.Random(operator.getRandom().nextLong()));
-        var spawned = NpcSpawns.spawn(operator.serverLevel(), pos, crowd.preset(), NpcAttitude.INDIFFERENT);
-        if (spawned.isEmpty()) return InteractionResult.FAIL;
-        var npc = spawned.orElseThrow();
-        npc.setCustomName(Component.literal(profile.name()));
-        npc.setAppearance(profile.texture(), profile.scale());
-        npc.setBehavior(NpcBehaviorMode.WANDER, profile.radius());
-        npc.setItemSlot(EquipmentSlot.MAINHAND, ModItems.weapon(profile.weapon()).getDefaultInstance());
-        npc.setDropChance(EquipmentSlot.MAINHAND, 0);
-        return InteractionResult.CONSUME;
+        var spawned = NpcSpawns.spawn(operator.serverLevel(), pos, crowd.preset(), NpcAttitude.INDIFFERENT, npc -> {
+            npc.setCustomName(Component.literal(profile.name()));
+            npc.setAppearance(profile.texture(), profile.scale());
+            npc.setBehavior(NpcBehaviorMode.WANDER, profile.radius());
+            if (profile.weapon() != null) {
+                npc.setItemSlot(EquipmentSlot.MAINHAND, ModItems.weapon(profile.weapon()).getDefaultInstance());
+                npc.setDropChance(EquipmentSlot.MAINHAND, 0);
+            }
+        });
+        return spawned.isPresent() ? InteractionResult.CONSUME : InteractionResult.FAIL;
     }
 }

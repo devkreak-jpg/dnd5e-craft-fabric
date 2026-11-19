@@ -32,8 +32,7 @@ public abstract class CampaignCompanion extends PathfinderMob {
 
     public final ServerPlayer owner() {
         if (!(level() instanceof ServerLevel level)) return null;
-        return ownerId().map(level::getEntity).filter(ServerPlayer.class::isInstance).map(ServerPlayer.class::cast)
-                .filter(ServerPlayer::isAlive).orElse(null);
+        return ownerId().map(level.getServer().getPlayerList()::getPlayer).orElse(null);
     }
 
     @Override public boolean hurt(DamageSource source, float amount) {

@@ -12,8 +12,6 @@ import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.entity.TriggerZoneSpec.Mode;
 import net.dnd5ecraft.network.ModPackets;
 import net.dnd5ecraft.rules.ability.Ability;
-import net.dnd5ecraft.rules.ability.AbilityCheckEngine.CheckResult;
-import net.dnd5ecraft.rules.ability.ProficiencyLevel;
 import net.dnd5ecraft.rules.ability.Skill;
 import net.dnd5ecraft.rules.equipment.DamageType5e;
 import net.dnd5ecraft.server.CinematicFreeze;
@@ -31,7 +29,6 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.Vec3;
 
 public final class TriggerZoneBlockEntity extends BlockEntity {
     private final Set<UUID> detected = new HashSet<>();
@@ -65,14 +62,12 @@ public final class TriggerZoneBlockEntity extends BlockEntity {
     public TriggerZoneSpec specification() { return spec; }
 
     static void tick(Level level, BlockPos pos, BlockState block, TriggerZoneBlockEntity zone) {
-        if (!(level instanceof ServerLevel server) || zone.spec == null) return;
+        if (!(level instanceof ServerLevel server) || zone.spec == null || level.getGameTime() % 4 != 0) return;
         zone.scan(server);
     }
 
     private void scan(ServerLevel level) {
-        var min = spec.min();
-        var max = spec.max();
-        AABB bounds = new AABB(min.x(), min.y(), min.z(), max.x() + 1.0, max.y() + 1.0, max.z() + 1.0);
+        AABB bounds = bounds();
         List<ServerPlayer> present = level.getEntitiesOfClass(ServerPlayer.class, bounds,
                 player -> player.isAlive() && !player.isSpectator() && !player.isCreative()
                         && spec.contains(cell(player.blockPosition())));
@@ -113,7 +108,8 @@ public final class TriggerZoneBlockEntity extends BlockEntity {
                 for (int dz = -radius; dz <= radius && spawned.size() < spec.ambushers(); dz++) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != radius) continue;
                     BlockPos spot = center.offset(dx, 0, dz);
-                    if (!level.isLoaded(spot) || !level.getBlockState(spot.below()).isSolidRender(level, spot.below())) continue;
+                    if (!level.isLoaded(spot) || level.isOutsideBuildHeight(spot.above())
+                            || !level.getBlockState(spot.below()).isSolidRender(level, spot.below()) || !clearAmbushSpace(level, spot)) continue;
                     NpcSpawns.spawn(level, spot, spec.ambusher(), NpcAttitude.HOSTILE).ifPresent(spawned::add);
                 }
             }
@@ -130,28 +126,31 @@ public final class TriggerZoneBlockEntity extends BlockEntity {
         return true;
     }
 
+    private AABB bounds() {
+        var min = spec.min();
+        var max = spec.max();
+        return new AABB(min.x(), min.y(), min.z(), max.x() + 1.0, max.y() + 1.0, max.z() + 1.0);
+    }
+
+    static boolean clearAmbushSpace(net.minecraft.world.level.BlockGetter level, BlockPos spot) {
+        return level.getBlockState(spot).getCollisionShape(level, spot).isEmpty()
+                && level.getBlockState(spot.above()).getCollisionShape(level, spot.above()).isEmpty();
+    }
+
     public void investigate(ServerPlayer player, boolean disarm) {
         PlayerRules.requireDowntime(player);
         if (spec == null || spec.mode() != Mode.TRAP || !armed() || player.level() != level
-                || player.distanceToSqr(Vec3.atCenterOf(worldPosition)) > (disarm ? 9 : 64)) {
+                || bounds().distanceToSqr(player.position()) > (disarm ? 9 : 64)) {
             throw new IllegalStateException("No reachable armed trap");
         }
         long tick = level.getGameTime();
         if (tick - checked.getOrDefault(player.getUUID(), -40L) < 40) throw new IllegalStateException("Wait before trying again");
         var skill = disarm ? Skill.SLEIGHT_OF_HAND : Skill.INVESTIGATION;
-        var sheet = PlayerSheets.getOrCreate(player);
-        var result = PlayerRules.check(player, skill, disarm ? spec.disarmDc() : spec.investigationDc());
-        if (disarm) {
-            if (!detected.contains(player.getUUID()) || (!player.isHolding(Items.TRIPWIRE_HOOK) && !player.isHolding(net.dnd5ecraft.item.ModItems.THIEVES_TOOLS))) {
-                throw new IllegalStateException("Locate the trap and hold a tripwire hook as thieves’ tools");
-            }
-            if (sheet.background().tools().contains("thieves_tools")) {
-                result = new CheckResult(result.naturalRoll(),
-                        Ability.modifier(sheet.score(Ability.DEXTERITY))
-                                + ProficiencyLevel.bonusAtLevel(sheet.level()), result.difficulty());
-            } else result = new CheckResult(result.naturalRoll(),
-                    Ability.modifier(sheet.score(Ability.DEXTERITY)), result.difficulty());
+        if (disarm && (!detected.contains(player.getUUID()) || (!player.isHolding(Items.TRIPWIRE_HOOK)
+                && !player.isHolding(net.dnd5ecraft.item.ModItems.THIEVES_TOOLS)))) {
+            throw new IllegalStateException("Locate the trap and hold thieves’ tools");
         }
+        var result = disarm ? PlayerRules.disarm(player, spec.disarmDc()) : PlayerRules.check(player, skill, spec.investigationDc());
         checked.put(player.getUUID(), tick);
         PlayerRules.show(player, PlayerRules.label("skill", skill.name()), result);
         if (!result.succeeds()) return;

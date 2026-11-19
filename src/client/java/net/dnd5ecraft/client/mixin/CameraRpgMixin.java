@@ -35,7 +35,8 @@ public abstract class CameraRpgMixin {
             var collision = level.clip(new ClipContext(base, getPosition(), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, viewer));
             if (collision.getType() != HitResult.Type.MISS) setPosition(base.lerp(collision.getLocation(), .7));
         }
-        double shake = ClientDndState.shake();
+        double fumble = ClientDndState.goldenFlash() ? 0 : ClientDndState.cinema();
+        double shake = Math.max(ClientDndState.shake(), 2.8 * fumble * fumble);
         if (shake > 0) {
             double phase = Util.getMillis() / 13.0;
             setRotation(getYRot() + (float) (Math.sin(phase) * shake * .23),

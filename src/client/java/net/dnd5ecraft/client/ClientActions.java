@@ -98,7 +98,9 @@ public final class ClientActions {
         if (ClientCampaign.pick()) return true;
         if (aiming != null) {
             if (aiming.spell.area().isPresent() && (aiming.origin == null || aiming.spell.effect().kind() != Spell.EffectKind.HEAL)) {
-                aiming.origin = aimPoint(aiming.spell);
+                var point = aimPoint(aiming.spell);
+                if (point == null) ClientDndState.notify(text("aim.no_target"));
+                else aiming.origin = point;
                 return true;
             }
             var target = aimedCreature(aiming.spell.rangeFeet() / 5.0);
@@ -138,7 +140,8 @@ public final class ClientActions {
             var point = hoveredCell();
             if (item.is(ModItems.ELDRITCH_CANNON_CONTROLLER)) {
                 if (ClientCampaign.companion(net.dnd5ecraft.entity.EldritchCannonEntity.class) == null) {
-                    ClientCampaign.act(net.dnd5ecraft.server.CampaignActions.Action.CANNON_SUMMON, null, point, 0);
+                    if (point == null) ClientDndState.notify(text("campaign.companion_ground"));
+                    else ClientCampaign.act(net.dnd5ecraft.server.CampaignActions.Action.CANNON_SUMMON, null, point, 0);
                 } else if (client.player.isShiftKeyDown()) {
                     ClientCampaign.act(net.dnd5ecraft.server.CampaignActions.Action.CANNON_MODE, null, null, 0);
                 } else net.dnd5ecraft.client.gui.screen.CampaignActionsScreen.fireCannon();
@@ -149,7 +152,9 @@ public final class ClientActions {
                 var action = echo == null ? net.dnd5ecraft.server.CampaignActions.Action.ECHO_MANIFEST
                         : client.player.isShiftKeyDown() ? net.dnd5ecraft.server.CampaignActions.Action.ECHO_SWAP
                         : net.dnd5ecraft.server.CampaignActions.Action.ECHO_MOVE;
-                ClientCampaign.act(action, null, point, 0);
+                if (point == null && action != net.dnd5ecraft.server.CampaignActions.Action.ECHO_SWAP) {
+                    ClientDndState.notify(text("campaign.companion_ground"));
+                } else ClientCampaign.act(action, null, point, 0);
                 return true;
             }
             if (item.is(ModItems.HARLEQUIN_DECK_WAND)) {
@@ -206,10 +211,21 @@ public final class ClientActions {
     }
 
     public static void ping() {
-        var camera = Minecraft.getInstance().getCameraEntity();
-        if (camera != null && camera.pick(32, 1, false) instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK) {
-            ClientPacketHandlers.send(Action.PING, buf -> PacketCodec.cell(buf, asCell(hit.getBlockPos())));
-        }
+        var hit = crosshair(48);
+        if (hit == null || hit.getType() == HitResult.Type.MISS) return;
+        var p = hit.getLocation();
+        ClientPacketHandlers.send(Action.C2S_TACTICAL_PING, out -> {
+            out.writeDouble(p.x); out.writeDouble(p.y); out.writeDouble(p.z);
+            out.writeVarInt(hit instanceof EntityHitResult entity ? entity.getEntity().getId() : -1);
+        });
+    }
+
+    public static HitResult crosshair(double range) {
+        var client = Minecraft.getInstance();
+        var camera = client.gameRenderer.getMainCamera();
+        if (!camera.isInitialized() || camera.getEntity() == null) return null;
+        return net.dnd5ecraft.network.StudioEffects.sight(camera.getEntity(), camera.getPosition(),
+                new Vec3(camera.getLookVector()), range);
     }
 
     public static void react(Kind kind, boolean highest) {

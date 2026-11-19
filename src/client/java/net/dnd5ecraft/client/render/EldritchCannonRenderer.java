@@ -20,6 +20,8 @@ import net.minecraft.resources.ResourceLocation;
 public final class EldritchCannonRenderer extends EntityRenderer<EldritchCannonEntity> {
     private static final ResourceLocation BRASS = Dnd5eCraftMod.id("textures/entity/eldritch_cannon.png");
     private static final ResourceLocation RUNE = Dnd5eCraftMod.id("textures/entity/cosmetic_linen.png");
+    private final java.util.WeakHashMap<EldritchCannonEntity, Float> tuck = new java.util.WeakHashMap<>();
+    private final java.util.WeakHashMap<EldritchCannonEntity, Float> lastFrame = new java.util.WeakHashMap<>();
     private final ModelPart chassis;
     private final ModelPart barrel;
     private final ModelPart core;
@@ -61,13 +63,22 @@ public final class EldritchCannonRenderer extends EntityRenderer<EldritchCannonE
         pose.scale(.78f, -.78f, .78f);
         var solid = buffers.getBuffer(RenderType.entityCutout(BRASS));
         chassis.render(pose, solid, light, OverlayTexture.NO_OVERLAY);
-        barrel.z = Math.max(0, entity.recoil() - partialTick) * .46f;
+        float recoilProgress = net.minecraft.util.Mth.clamp((entity.recoil() - partialTick) / 8f, 0, 1);
+        float kick = (float) Math.pow(recoilProgress, 2.2) * .52f;
+        barrel.z = kick * 8;
         barrel.render(pose, solid, light, OverlayTexture.NO_OVERLAY);
-        float movement = entity.perched() ? .16f : Math.min(1, entity.walkAnimation.speed(partialTick) * 4);
         float phase = entity.tickCount + partialTick;
+        float target = entity.perched() ? 1 : 0;
+        float previous = tuck.getOrDefault(entity, target);
+        float step = Math.max(0, phase - lastFrame.getOrDefault(entity, phase)) / 3.6f;
+        float blend = previous + net.minecraft.util.Mth.clamp(target - previous, -step, step);
+        lastFrame.put(entity, phase);
+        tuck.put(entity, blend);
+        float movement = (1 - blend) * Math.min(1, entity.walkAnimation.speed(partialTick) * 4);
+        float stride = entity.walkAnimation.position(partialTick);
         for (int i = 0; i < legs.length; i++) {
-            legs[i].yRot = (float) Math.sin(phase * .58 + i * 1.3) * movement * .29f;
-            legs[i].zRot = entity.perched() ? (i % 2 == 0 ? -.4f : .4f) : 0;
+            legs[i].yRot = (float) Math.sin(stride * .9 + i * 1.3) * movement * .29f;
+            legs[i].zRot = blend * (i % 2 == 0 ? -.4f : .4f);
             legs[i].render(pose, solid, light, OverlayTexture.NO_OVERLAY);
         }
         float[] tone = switch (entity.mode()) {

@@ -64,7 +64,7 @@ final class CampaignCombat {
         if (remaining + change < 0) throw new IllegalStateException("Not enough Chaos Points");
         int next = Math.min(limit, remaining + change);
         actor.characterResources = actor.characterResources.withSpent(ClassFeature.CHAOS_POINTS, limit - next);
-        if (chaosLevel(actor) >= 3 && next != remaining) actor.chaosShift = change > 0 ? 15 : 10;
+        if (chaosLevel(actor) >= 3 && next != remaining) actor.chaosShift = Math.max(actor.chaosShift, change > 0 ? 15 : 10);
     }
 
     void action(CombatantEntry user, Action action, UUID id, Cell point, int option, long time) {
@@ -101,9 +101,10 @@ final class CampaignCombat {
             case GORING_RUSH -> {
                 requireMinotaur(user);
                 if (!user.campaignDash || target == null) throw new IllegalStateException("Dash and choose a target first");
-                requireReach(user, target, 5);
+                var origin = requireReach(user, target, 5);
                 CombatManeuverResolver.spend(user, Resource.BONUS_ACTION);
-                manager.maneuvers().strike(user, target, fist(user, true), true, time, ignored -> {});
+                manager.maneuvers().strikeFrom(user, target, fist(user, true), origin, true, time,
+                        ignored -> {}, false, 0, false, () -> {});
             }
             case HAMMERING_HORNS -> {
                 requireMinotaur(user);
@@ -144,8 +145,8 @@ final class CampaignCombat {
                 directorTurn = manager.turnSequence();
             }
             case AUDIENCE_LAUGHTER -> {
-                if (chaosLevel(user) < 2 || user.laughterRound != encounter.round()) throw new IllegalStateException("No audience reaction is available");
-                user.laughterRound = -encounter.round();
+                if (chaosLevel(user) < 2 || (user.laughterRound != encounter.round() || user.laughterClaimed)) throw new IllegalStateException("No audience reaction is available");
+                user.laughterClaimed = true;
                 changeChaos(user, 1);
             }
             case MISE_EN_SCENE -> {
@@ -249,9 +250,10 @@ final class CampaignCombat {
     void onNatural(CombatantEntry roller, int roll) {
         if (!encounter.active() || roll != 1 && roll != 20) return;
         for (var listener : encounter.initiativeOrder()) {
-            if (chaosLevel(listener) >= 2 && Math.abs(listener.laughterRound) != encounter.round()
+            if (chaosLevel(listener) >= 2 && listener.laughterRound != encounter.round()
                     && listener.cell().distanceFeet(roller.cell()) <= 60) {
                 listener.laughterRound = encounter.round();
+                listener.laughterClaimed = false;
             }
         }
     }
@@ -261,11 +263,12 @@ final class CampaignCombat {
         return target;
     }
 
-    private void requireReach(CombatantEntry user, CombatantEntry target, int range) {
+    private Cell requireReach(CombatantEntry user, CombatantEntry target, int range) {
         manager.validateHostileTarget(user, target);
-        if (user.cell().distanceFeet(target.cell()) > range || manager.cover(user, target).blocksTargeting()) {
-            throw new IllegalArgumentException("Target is beyond reach");
-        }
+        if (user.cell().distanceFeet(target.cell()) <= range && !manager.cover(user, target).blocksTargeting()) return user.cell();
+        var echo = manager.echoCell(user);
+        if (echo != null && echo.distanceFeet(target.cell()) <= range && !manager.coverFrom(echo, target).blocksTargeting()) return echo;
+        throw new IllegalArgumentException("Target is beyond reach");
     }
 
     void condition(CombatantEntry source, CombatantEntry target, ConditionType type, int duration) {

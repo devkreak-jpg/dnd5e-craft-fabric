@@ -41,6 +41,40 @@ final class CampaignAssetIntegrityTest {
     }
 
     @Test
+    void weaponGripsShieldGeometryAndChestplateSpritesAreComplete() throws Exception {
+        var weapons = new ArrayList<String>();
+        for (var weapon : Weapon.values()) weapons.add(weapon.name().toLowerCase(Locale.ROOT));
+        weapons.add("repeating_light_crossbow");
+        for (var weapon : weapons) {
+            var model = model(weapon);
+            assertEquals("minecraft:item/handheld", model.get("parent").getAsString(), weapon);
+            for (String hand : List.of("righthand", "lefthand")) {
+                var first = model.getAsJsonObject("display").getAsJsonObject("firstperson_" + hand);
+                for (var scale : first.getAsJsonArray("scale")) assertTrue(scale.getAsDouble() <= .85, weapon);
+            }
+        }
+        var shield = model("sentinel_shield");
+        assertTrue(shield.getAsJsonArray("elements").size() >= 10);
+        var override = shield.getAsJsonArray("overrides").get(0).getAsJsonObject();
+        assertEquals(1, override.getAsJsonObject("predicate").get("blocking").getAsInt());
+        assertEquals("dnd-5e-craft:item/sentinel_shield_blocking", override.get("model").getAsString());
+        assertNotEquals(shield.getAsJsonObject("display").get("firstperson_lefthand"),
+                model("sentinel_shield_blocking").getAsJsonObject("display").get("firstperson_lefthand"));
+        for (String armor : List.of("studded_leather_armor", "breastplate", "half_plate", "plate_armor")) {
+            assertEquals("dnd-5e-craft:item/" + armor, model(armor).getAsJsonObject("textures").get("layer0").getAsString());
+            var image = png("textures/item/" + armor + ".png");
+            assertEquals(32, image.getWidth(), armor);
+            assertEquals(32, image.getHeight(), armor);
+        }
+    }
+
+    private static com.google.gson.JsonObject model(String item) throws Exception {
+        try (var reader = new InputStreamReader(asset("models/item/" + item + ".json"), StandardCharsets.UTF_8)) {
+            return JsonParser.parseReader(reader).getAsJsonObject();
+        }
+    }
+
+    @Test
     void campaignEntityAndEveryCrowdSkinCanBeDecoded() throws Exception {
         for (var name : List.of("campaign_npc", "echo_avatar", "eldritch_cannon", "cosmetic_linen")) {
             png("textures/entity/" + name + ".png");

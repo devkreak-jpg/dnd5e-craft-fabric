@@ -6,6 +6,7 @@
     "ClientPlayerMoveClampMixin",
     "CameraRpgMixin",
     "EntityRenderScaleMixin",
+    "ShadowRadiusMixin",
     "DarkvisionLightmapMixin",
     "MinecraftInteractionMixin",
     "KeyboardHandlerMixin",

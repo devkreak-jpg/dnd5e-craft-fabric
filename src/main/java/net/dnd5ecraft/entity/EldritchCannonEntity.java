@@ -31,9 +31,19 @@ public final class EldritchCannonEntity extends CampaignCompanion {
     }
 
     public Mode mode() { return Mode.values()[Math.floorMod(entityData.get(MODE), Mode.values().length)]; }
-    public void mode(Mode mode) { entityData.set(MODE, mode.ordinal()); }
+    public void mode(Mode mode) { if (mode != null) entityData.set(MODE, mode.ordinal()); }
     public boolean perched() { return entityData.get(PERCHED); }
-    public void perched(boolean value) { entityData.set(PERCHED, value); setNoGravity(value); }
+    public void perched(boolean value) {
+        entityData.set(PERCHED, value);
+        setNoGravity(value);
+        noPhysics = value;
+        if (value) fallDistance = 0;
+    }
+
+    @Override public void onSyncedDataUpdated(EntityDataAccessor<?> key) {
+        super.onSyncedDataUpdated(key);
+        if (PERCHED.equals(key)) noPhysics = perched();
+    }
     public int recoil() { return entityData.get(RECOIL); }
     public void fire() { entityData.set(RECOIL, 8); }
 
@@ -43,14 +53,28 @@ public final class EldritchCannonEntity extends CampaignCompanion {
         if (recoil() > 0) entityData.set(RECOIL, recoil() - 1);
         var owner = owner();
         if (owner == null) return;
+        if (!owner.isAlive() || owner.level() != level()) {
+            discard();
+            return;
+        }
         if (perched()) {
+            noPhysics = true;
+            fallDistance = 0;
             getNavigation().stop();
             double yaw = Math.toRadians(owner.getYRot());
             setPos(owner.getX() + Math.cos(yaw) * .48, owner.getEyeY() - .26, owner.getZ() + Math.sin(yaw) * .48);
             setYRot(owner.getYRot());
             setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
-        } else if (tickCount % 10 == 0 && distanceToSqr(owner) > 9 && distanceToSqr(owner) < 256) {
-            getNavigation().moveTo(owner, 1.1);
+        } else if (tickCount % 10 == 0 && distanceToSqr(owner) > 9) {
+            if (distanceToSqr(owner) > 256 && !net.dnd5ecraft.server.TacticalCombat.isLocked(owner)) {
+                var spot = net.dnd5ecraft.server.CampaignActions.companionGround(owner, this, 2);
+                if (spot != null) {
+                    getNavigation().stop();
+                    moveTo(spot.getX() + .5, spot.getY(), spot.getZ() + .5, owner.getYRot(), 0);
+                    ((net.minecraft.server.level.ServerLevel) level()).sendParticles(net.minecraft.core.particles.ParticleTypes.PORTAL,
+                            getX(), getY() + .3, getZ(), 24, .25, .25, .25, .1);
+                }
+            } else getNavigation().moveTo(owner, 1.1);
         }
     }
 
