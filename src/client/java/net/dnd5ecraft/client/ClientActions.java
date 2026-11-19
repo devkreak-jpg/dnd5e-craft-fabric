@@ -107,7 +107,7 @@ public final class ClientActions {
             return true;
         }
         var combat = ClientDndState.combat();
-        if (combat == null) return false;
+        if (combat == null || !combat.hasActor()) return false;
         var hit = aimedCreature(64);
         if (hit != null && combat.creature(hit.getEntity().getUUID()) != null) {
             ClientPacketHandlers.send(Action.ATTACK, out -> {
@@ -132,12 +132,12 @@ public final class ClientActions {
             return true;
         }
         var combat = ClientDndState.combat();
-        if (combat == null && ClientDndState.state().dm() && client.getCameraEntity() instanceof DndNpcEntity) {
+        if (!ClientDndState.controlsCombatant() && ClientDndState.state().dm() && client.getCameraEntity() instanceof DndNpcEntity) {
             Cell destination = hoveredCell();
             if (destination != null) ClientPacketHandlers.send(Action.PILOT, out -> PacketCodec.cell(out, destination));
             return true;
         }
-        if (combat == null || client.player.getMainHandItem().is(ModItems.HEALING_DRAUGHT)) return false;
+        if (combat == null || !combat.hasActor() || client.player.getMainHandItem().is(ModItems.HEALING_DRAUGHT)) return false;
         Cell goal = hoveredCell();
         if (goal != null && combat.reachable().containsKey(goal)) {
             ClientPacketHandlers.send(Action.MOVE, out -> PacketCodec.cell(out, goal));
@@ -159,7 +159,7 @@ public final class ClientActions {
         if (hit instanceof BlockHitResult block && block.getType() == HitResult.Type.BLOCK) {
             Cell adjacent = asCell(block.getBlockPos().relative(block.getDirection()));
             var combat = ClientDndState.combat();
-            if (combat == null || combat.reachable().containsKey(adjacent)) return adjacent;
+            if (combat == null || !combat.hasActor() || combat.reachable().containsKey(adjacent)) return adjacent;
             Cell surface = asCell(block.getBlockPos().above());
             return combat.reachable().containsKey(surface) ? surface : adjacent;
         }
@@ -188,7 +188,8 @@ public final class ClientActions {
 
     public static void react(Kind kind, boolean highest) {
         var combat = ClientDndState.combat();
-        if (combat == null || combat.reaction() == null || ClientDndState.reactionRemaining() == 0) return;
+        if (combat == null || !combat.hasActor() || combat.reaction() == null || ClientDndState.reactionRemaining() == 0
+                || kind != null && !combat.reaction().choices().contains(kind)) return;
         Pool chosenPool = Pool.REGULAR;
         int chosenSlot = 0;
         if (kind == Kind.SHIELD || kind == Kind.COUNTERSPELL) {

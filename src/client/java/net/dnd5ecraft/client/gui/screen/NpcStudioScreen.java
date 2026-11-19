@@ -5,7 +5,9 @@ import java.util.List;
 import net.dnd5ecraft.client.ClientDndState;
 import net.dnd5ecraft.client.ClientPacketHandlers;
 import net.dnd5ecraft.dialogue.NpcAttitude;
+import net.dnd5ecraft.dialogue.DialogueText;
 import net.dnd5ecraft.entity.BestiaryPreset;
+import net.dnd5ecraft.entity.BestiaryRegistry5e;
 import net.dnd5ecraft.network.PacketCodec;
 import net.dnd5ecraft.network.PacketPolicy.Action;
 import net.dnd5ecraft.network.Protocol.DialogueOption;
@@ -41,11 +43,11 @@ public final class NpcStudioScreen extends DndScreen {
         int x = left + 12;
         int w = innerWidth();
         int half = (w - 8) / 2;
-        if (option == -1) {
+        if (option < 0 || option >= options.size()) {
             edit("field.name", displayName, x, top + 43, w, 80).setResponder(value -> displayName = value);
             button(Component.translatable("entity.dnd-5e-craft.npc." + preset.id()), x, top + 69, half, () -> {
-                var presets = BestiaryPreset.values();
-                preset = presets[(preset.ordinal() + 1) % presets.length];
+                var presets = BestiaryRegistry5e.spawnable();
+                preset = presets.get((presets.indexOf(preset) + 1) % presets.size());
                 if (!preset.features().contains(BestiaryPreset.Feature.LAIR_ACTION)) lair = false;
                 rebuild();
             });
@@ -53,10 +55,10 @@ public final class NpcStudioScreen extends DndScreen {
             button(text("npc.lair", text(lair ? "on" : "off")), x, top + 95, half, () -> { lair = !lair; rebuild(); }).active
                     = preset.features().contains(BestiaryPreset.Feature.LAIR_ACTION);
             button(text("npc.options"), x + half + 8, top + 95, half, () -> { option = 0; rebuild(); }).active = !options.isEmpty();
-            edit("npc.greeting", greeting, x, top + 129, w, 1024).setResponder(value -> greeting = value);
+            edit("npc.greeting", DialogueText.component(greeting).getString(), x, top + 129, w, 1024).setResponder(value -> greeting = value);
         } else {
             var current = options.get(option);
-            edit("npc.option_label", current.label(), x, top + 43, w, 256).setResponder(label -> {
+            edit("npc.option_label", DialogueText.component(current.label()).getString(), x, top + 43, w, 256).setResponder(label -> {
                 var latest = options.get(option);
                 options.set(option, new DialogueOption(latest.id(), label, latest.skill(), latest.dc()));
             });
@@ -77,7 +79,7 @@ public final class NpcStudioScreen extends DndScreen {
                 });
             }
             button(text("back"), x, top + 97, half, () -> { option = -1; rebuild(); });
-            button(text("next"), x + half + 8, top + 97, half, () -> { option = (option + 1) % options.size(); rebuild(); });
+            button(text("next"), x + half + 8, top + 97, half, () -> { option = (option + 1) % options.size(); rebuild(); }).active = options.size() > 1;
         }
         button(text("close"), x, bottom() - 25, 70, this::onClose);
         button(text("save"), x + w - 84, bottom() - 25, 84, this::save).active = ClientDndState.state().operator();
@@ -102,7 +104,7 @@ public final class NpcStudioScreen extends DndScreen {
 
     @Override protected void content(GuiGraphics g, int mouseX, int mouseY) {
         int x = left + 12;
-        if (option == -1) {
+        if (option < 0 || option >= options.size()) {
             caption(g, "field.name", x, top + 32);
             caption(g, "npc.greeting", x, top + 118);
             clipped(g, font, text("npc.stats", preset.challenge(), preset.armor(), preset.maxHp(), preset.speedFeet()),

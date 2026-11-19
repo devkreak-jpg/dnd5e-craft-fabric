@@ -11,6 +11,7 @@ import net.dnd5ecraft.combat.EncounterDifficultyCalculator;
 import net.dnd5ecraft.combat.GridMovementTracker.Cell;
 import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.entity.BestiaryPreset;
+import net.dnd5ecraft.entity.BestiaryRegistry5e;
 import net.dnd5ecraft.network.PacketCodec;
 import net.dnd5ecraft.network.PacketPolicy.Action;
 import net.minecraft.client.gui.GuiGraphics;
@@ -65,7 +66,7 @@ public final class DmMasterConsoleScreen extends DndScreen {
         });
         possess.active = op && npc != null && ClientDndState.state().dm();
         button(Component.translatable("entity.dnd-5e-craft.npc." + preset.id()), x, top + 74, col, () -> {
-            var presets = BestiaryPreset.values(); preset = presets[(preset.ordinal() + 1) % presets.length]; rebuild();
+            var presets = BestiaryRegistry5e.spawnable(); preset = presets.get((presets.indexOf(preset) + 1) % presets.size()); rebuild();
         }).active = op;
         button(text("dm.spawn"), second, top + 74, col, () -> ClientPacketHandlers.send(Action.NPC_SPAWN, out -> {
             PacketCodec.cell(out, spawn);
@@ -87,7 +88,7 @@ public final class DmMasterConsoleScreen extends DndScreen {
         }).active = op;
     }
 
-    @Override public void tick() {
+    @Override protected void tickInWorld() {
         if (showParty && !lastParty.equals(ClientDndState.party())) {
             lastParty = ClientDndState.party();
             rebuild();

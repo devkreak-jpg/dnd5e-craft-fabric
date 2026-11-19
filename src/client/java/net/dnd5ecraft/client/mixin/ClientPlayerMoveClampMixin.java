@@ -17,7 +17,7 @@ public abstract class ClientPlayerMoveClampMixin {
     @Inject(method = "aiStep", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/Input;tick(ZF)V", shift = At.Shift.AFTER))
     @Unique
     private void dnd5e$keepTacticalInput(CallbackInfo callback) {
-        if (ClientDndState.combat() == null || ClientDndState.state().dm()) return;
+        if (!ClientDndState.controlsCombatant() || ClientDndState.state().dm()) return;
         input.forwardImpulse = 0;
         input.leftImpulse = 0;
         input.jumping = false;

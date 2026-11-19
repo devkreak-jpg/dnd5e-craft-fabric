@@ -30,6 +30,7 @@ public final class ClientDndState {
 
     public static Protocol.State state() { return state; }
     public static Protocol.Combat combat() { return state.combat(); }
+    public static boolean controlsCombatant() { return combat() != null && combat().hasActor(); }
     public static CharacterSheetData sheet() { return sheet; }
     public static int sheetArmor() { return sheetArmor; }
     public static List<Protocol.PartyMember> party() { return party; }
@@ -46,7 +47,7 @@ public final class ClientDndState {
         var reaction = after == null ? null : after.reaction();
         if (reaction == null) reactionDeadline = 0;
         else {
-            long deadline = Util.getMillis() + Math.min(3500, Math.max(0, reaction.millisecondsLeft()));
+            long deadline = Util.getMillis() + reaction.millisecondsLeft();
             reactionDeadline = old != null && before.id().equals(after.id()) && old.id() == reaction.id()
                     ? Math.min(reactionDeadline, deadline) : deadline;
         }
@@ -87,12 +88,17 @@ public final class ClientDndState {
         sheet = null;
         sheetArmor = 0;
         party = List.of();
-        banner = null;
         draft = List.of();
+        reactionDeadline = 0;
+        clearWorldEffects();
+    }
+
+    static void clearWorldEffects() {
+        banner = null;
         dice.clear();
         pings.clear();
         notice = null;
-        reactionDeadline = shakeUntil = 0;
+        shakeUntil = 0;
         ClientActions.cancelAim();
     }
 }

@@ -8,24 +8,36 @@ import java.util.Set;
 import java.util.UUID;
 
 public final class ReactionWindowManager {
-    public static final long WINDOW_MILLIS = 3_500;
+    public static final int WINDOW_MILLIS = 3_500;
 
     public enum Kind { OPPORTUNITY_ATTACK, SHIELD, COUNTERSPELL, UNCANNY_DODGE, CUTTING_WORDS, DEFLECT_MISSILES, READIED_ATTACK }
     public record Offer(UUID reactor, Kind kind) {
         public Offer { Objects.requireNonNull(reactor); Objects.requireNonNull(kind); }
     }
-    public record Window(long id, long deadlineMillis, List<Offer> offers, Set<UUID> answered) {
+    public record Window(long id, long deadlineMillis, List<Offer> offers, Set<UUID> answered, int totalDurationMs) {
+        public Window(long id, long deadlineMillis, List<Offer> offers, Set<UUID> answered) {
+            this(id, deadlineMillis, offers, answered, WINDOW_MILLIS);
+        }
+
         public Window { offers = List.copyOf(offers); answered = Set.copyOf(answered); }
     }
 
+    private final int durationMillis;
     private long sequence;
     private Window window;
+
+    public ReactionWindowManager() { this(WINDOW_MILLIS); }
+
+    public ReactionWindowManager(int durationMillis) {
+        if (durationMillis <= 0) throw new IllegalArgumentException("Reaction window must be positive");
+        this.durationMillis = durationMillis;
+    }
 
     public Window open(List<Offer> offers, long nowMillis) {
         if (window != null) throw new IllegalStateException("A reaction prompt is already open");
         if (offers.isEmpty()) throw new IllegalArgumentException("At least one reaction must be offered");
-        window = new Window(++sequence, Math.addExact(nowMillis, WINDOW_MILLIS),
-                List.copyOf(new LinkedHashSet<>(offers)), Set.of());
+        window = new Window(++sequence, Math.addExact(nowMillis, durationMillis),
+                List.copyOf(new LinkedHashSet<>(offers)), Set.of(), durationMillis);
         return window;
     }
 
@@ -43,7 +55,7 @@ public final class ReactionWindowManager {
         if (!canAnswer(id, reactor, kind, nowMillis)) return false;
         Set<UUID> answered = new LinkedHashSet<>(window.answered);
         answered.add(reactor);
-        window = new Window(window.id, window.deadlineMillis, window.offers, answered);
+        window = new Window(window.id, window.deadlineMillis, window.offers, answered, durationMillis);
         return true;
     }
 

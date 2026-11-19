@@ -62,7 +62,10 @@ public enum BestiaryPreset {
     YOUNG_RED_DRAGON("10", 18, 178, 40, 120, 1.95f, Kind.DRAGON, scores(23, 10, 21, 14, 11, 19),
             new CombatantEntry.Attack("Bite", 10, 10, 0, 0, List.of(
                     new DamageRoll(PIERCING, new Dice(2, 10), 6), new DamageRoll(FIRE, new Dice(1, 6), 0))),
-            BREATH_RECHARGE, MULTIATTACK);
+            BREATH_RECHARGE, MULTIATTACK),
+    TAVERN_KEEPER("0", 10, 4, 30, 0, 1f, Kind.HUMANOID, scores(10, 10, 10, 10, 12, 12), List.of()),
+    MERCHANT("0", 10, 4, 30, 0, 1f, Kind.HUMANOID, scores(10, 10, 10, 12, 10, 12), List.of()),
+    TOWN_GUARD("0", 16, 11, 30, 0, 1f, Kind.HUMANOID, scores(13, 12, 12, 10, 11, 10), List.of());
 
     public enum Kind { HUMANOID, BEAST, UNDEAD, ARTHROPOD, GIANT, MONSTROSITY, FIEND, DRAGON }
     public enum Feature { PACK_TACTICS, MAGIC_RESISTANCE, REGENERATION, BREATH_RECHARGE, LEGENDARY, LAIR_ACTION, MULTIATTACK }
@@ -76,11 +79,16 @@ public enum BestiaryPreset {
     private final float scale;
     private final Kind kind;
     private final Map<Ability, Integer> scores;
-    private final CombatantEntry.Attack attack;
+    private final List<CombatantEntry.Attack> baseAttacks;
     private final Set<Feature> features;
 
     BestiaryPreset(String challenge, int armor, int hp, int speed, int darkvision, float scale, Kind kind,
             Map<Ability, Integer> scores, CombatantEntry.Attack attack, Feature... features) {
+        this(challenge, armor, hp, speed, darkvision, scale, kind, scores, List.of(attack), features);
+    }
+
+    BestiaryPreset(String challenge, int armor, int hp, int speed, int darkvision, float scale, Kind kind,
+            Map<Ability, Integer> scores, List<CombatantEntry.Attack> attacks, Feature... features) {
         this.challenge = challenge;
         this.armor = armor;
         this.hp = hp;
@@ -89,7 +97,7 @@ public enum BestiaryPreset {
         this.scale = scale;
         this.kind = kind;
         this.scores = scores;
-        this.attack = attack;
+        this.baseAttacks = List.copyOf(attacks);
         this.features = Set.of(features);
     }
 
@@ -128,13 +136,25 @@ public enum BestiaryPreset {
     public int regeneration() { return this == TROLL || this == VAMPIRE_SPAWN ? 10 : this == VAMPIRE ? 20 : 0; }
     public int attacksPerAction() {
         return switch (this) {
+            case TAVERN_KEEPER, MERCHANT, TOWN_GUARD -> 0;
             case OWLBEAR, VAMPIRE, VAMPIRE_SPAWN -> 2;
             case TROLL, ADULT_RED_DRAGON, YOUNG_RED_DRAGON, BANDIT_CAPTAIN -> 3;
             default -> 1;
         };
     }
 
+    public boolean civilian() { return baseAttacks.isEmpty(); }
+
+    public double baseAttackDamage() {
+        var profiles = attacks();
+        if (profiles.isEmpty()) return 0;
+        return Math.max(1, profiles.get(0).damage().stream().mapToDouble(part ->
+                part.dice().count() * (part.dice().sides() + 1) / 2.0 + part.modifier()).sum());
+    }
+
     public List<CombatantEntry.Attack> attacks() {
+        if (baseAttacks.isEmpty()) return List.of();
+        var attack = baseAttacks.get(0);
         return switch (this) {
             case GOBLIN, SKELETON -> List.of(attack, ranged("Shortbow", 4, 80, 320, 1, 6, 2, PIERCING));
             case ORC, OGRE -> List.of(attack, ranged("Javelin", this == ORC ? 5 : 6, 30, 120,
@@ -149,7 +169,7 @@ public enum BestiaryPreset {
             case TROLL -> List.of(attack, attack("Bite", 7, 5, 1, 6, 4, PIERCING));
             case ADULT_RED_DRAGON -> List.of(attack, attack("Claw", 14, 5, 2, 6, 8, SLASHING),
                     attack("Tail", 14, 15, 2, 8, 8, BLUDGEONING));
-            default -> List.of(attack);
+            default -> baseAttacks;
         };
     }
 

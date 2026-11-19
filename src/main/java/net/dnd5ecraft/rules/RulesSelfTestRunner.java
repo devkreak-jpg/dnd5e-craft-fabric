@@ -1,13 +1,25 @@
 package net.dnd5ecraft.rules;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntUnaryOperator;
+import java.util.regex.Pattern;
 import net.dnd5ecraft.combat.EncounterDifficultyCalculator;
+import net.dnd5ecraft.combat.GridMovementTracker.Cell;
+import net.dnd5ecraft.dialogue.NpcAttitude;
+import net.dnd5ecraft.entity.BestiaryRegistry5e;
+import net.dnd5ecraft.network.CombatHudView;
+import net.dnd5ecraft.network.PlayerSessionStore;
+import net.dnd5ecraft.network.Protocol;
 import net.dnd5ecraft.rules.ability.Ability;
 import net.dnd5ecraft.rules.ability.AbilityCheckEngine;
 import net.dnd5ecraft.rules.ability.AbilityCheckEngine.CheckResult;
@@ -53,6 +65,7 @@ public final class RulesSelfTestRunner {
         runner.conditions();
         runner.geometry();
         runner.difficulty();
+        runner.hardening();
         System.out.printf("%d assertions passed%n", runner.checks);
     }
 
@@ -188,6 +201,65 @@ public final class RulesSelfTestRunner {
     private static IntUnaryOperator dice(int... values) {
         AtomicInteger index = new AtomicInteger();
         return sides -> values[index.getAndIncrement()];
+    }
+
+    private void hardening() {
+        UUID encounter = new UUID(0, 1);
+        var empty = new Protocol.Combat(encounter, null, null, 1, false, List.of(), Set.of(),
+                0, Map.of(), Map.of(), List.of(), List.of(), Protocol.Slots.EMPTY, null);
+        check("empty initiative ribbon", List.of(), CombatHudView.initiative(empty, 6));
+        UUID actor = new UUID(0, 2);
+        var ally = new Protocol.Creature(actor, "Fighter", 0, 19, new Cell(0, 0, 0), 10, 10, 0, 12, 5,
+                DeathSaveTracker.State.CONSCIOUS, Set.of());
+        var observer = new Protocol.Combat(encounter, null, actor, 1, false, List.of(ally), Set.of(),
+                0, Map.of(), Map.of(), List.of(), List.of(), Protocol.Slots.EMPTY, null);
+        check("observer initiative ribbon", List.of(ally), CombatHudView.initiative(observer, 6));
+        check("observer faction color", true, CombatHudView.allied(observer, ally));
+        check("observer has no turn", false, observer.ownsTurn());
+        check("zero maximum HP", 0.0, CombatHudView.healthFraction(1, 0));
+        check("custom reaction duration", 0.25, new Protocol.Reaction(1, 2_000, List.of(), 8_000).progress(2_000));
+
+        check("negative NPC attitude", NpcAttitude.INDIFFERENT, NpcAttitude.fromIndex(-1));
+        check("out-of-range NPC attitude", NpcAttitude.INDIFFERENT, NpcAttitude.fromIndex(99));
+        check("three civilians", 3, BestiaryRegistry5e.civilians().size());
+        for (var preset : BestiaryRegistry5e.civilians()) {
+            check(preset.id() + " attack damage", 0.0, preset.baseAttackDamage());
+            check(preset.id() + " starter dialogue", 3, BestiaryRegistry5e.starterDialogue(preset).nodes().size());
+        }
+
+        record Player(UUID id) {}
+        var original = new Player(actor);
+        var replacement = new Player(actor);
+        var sessions = new PlayerSessionStore<List<Integer>>();
+        var pendingRolls = sessions.getOrCreate(original.id(), () -> List.of(17));
+        var restored = sessions.getOrCreate(replacement.id(), List::of);
+        check("replacement player retains pending rolls", pendingRolls, restored);
+        sessions.remove(replacement.id());
+        check("disconnect clears session", List.of(), sessions.getOrCreate(actor, List::of));
+
+        var english = localizationKeys("en_us");
+        check("observer badge translation", true, english.contains("dnd-5e-craft.ui.hud.dm_observing"));
+        check("localization key parity", english, localizationKeys("ru_ru"));
+    }
+
+    private Set<String> localizationKeys(String locale) {
+        var path = Path.of("src/main/resources/assets/dnd-5e-craft/lang", locale + ".json");
+        // Locale entries in this project use one JSON property per line.
+        var property = Pattern.compile("\"([^\"]+)\"\\s*:\\s*\"(.*)\",?");
+        Set<String> keys = new HashSet<>();
+        try {
+            for (String line : Files.readAllLines(path)) {
+                if (line.isBlank() || line.equals("{") || line.equals("}")) continue;
+                var match = property.matcher(line.strip());
+                if (!match.matches() || match.group(2).isBlank() || !keys.add(match.group(1))) {
+                    throw new AssertionError("Invalid, blank, or duplicate " + locale + " locale entry: " + line);
+                }
+            }
+        } catch (IOException error) {
+            throw new IllegalStateException("Run from the repository root to verify " + path, error);
+        }
+        check(locale + " has nonblank, unique translations", true, !keys.isEmpty());
+        return keys;
     }
 
     private void check(String label, Object expected, Object actual) {

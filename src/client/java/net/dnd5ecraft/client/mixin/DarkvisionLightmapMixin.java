@@ -34,7 +34,7 @@ public abstract class DarkvisionLightmapMixin {
         var client = Minecraft.getInstance();
         var viewer = client.player;
         int distance = ClientDndState.state().darkvision();
-        if (!dnd5e$updated || viewer == null || client.level == null || distance <= 0
+        if (!dnd5e$updated || lightPixels == null || lightTexture == null || viewer == null || client.level == null || distance <= 0
                 || viewer.hasEffect(MobEffects.BLINDNESS) || viewer.hasEffect(MobEffects.DARKNESS)
                 || viewer.hasEffect(MobEffects.NIGHT_VISION)) return;
         var camera = client.getCameraEntity();
@@ -42,9 +42,9 @@ public abstract class DarkvisionLightmapMixin {
         for (int sky = 0; sky < 8; sky++) {
             for (int block = 0; block < 8; block++) {
                 int pixel = lightPixels.getPixelRGBA(block, sky);
-                int red = brighten(pixel & 255, block, sky);
-                int green = brighten((pixel >>> 8) & 255, block, sky);
-                int blue = brighten((pixel >>> 16) & 255, block, sky);
+                int red = dnd5e$brighten(pixel & 255, block, sky);
+                int green = dnd5e$brighten((pixel >>> 8) & 255, block, sky);
+                int blue = dnd5e$brighten((pixel >>> 16) & 255, block, sky);
                 lightPixels.setPixelRGBA(block, sky, 0xFF000000 | (blue << 16) | (green << 8) | red);
             }
         }
@@ -52,7 +52,7 @@ public abstract class DarkvisionLightmapMixin {
     }
 
     @Unique
-    private static int brighten(int value, int block, int sky) {
+    private static int dnd5e$brighten(int value, int block, int sky) {
         return Math.min(255, value + (7 - Math.max(block, sky)) * Math.max(0, 160 - value) / 14);
     }
 }

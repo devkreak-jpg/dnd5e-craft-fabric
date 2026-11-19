@@ -13,7 +13,7 @@ java -cp build/classes/java/main net.dnd5ecraft.rules.RulesSelfTestRunner
 ./gradlew --offline --no-daemon build --console=plain -q | tail -n 60
 ```
 
-The installable remapped artifact is `build/libs/dnd-5e-craft-1.0.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 2 includes the advanced trigger settings and sheet armor field. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
+The installable remapped artifact is `build/libs/dnd-5e-craft-1.1.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 2 includes the advanced trigger settings and sheet armor field. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
 
 ## Phase checklist
 
@@ -28,6 +28,12 @@ The phase checks cover the offline build, the dedicated-server GameTests, and th
 - [x] Phase 5B. Character creation, spellbook, dialogue, NPC Studio, trigger-zone editor, and DM console screens.
 - [x] Phase 6. Tactical world rendering, spinning die, AoE previews, floating combat bars, camera, darkvision, and NPC rendering.
 - [x] Phase 7. English and Russian localizations, Mixin side audit, and remapped release verification.
+
+## v1.1 hardening
+
+- `CombatManager` orchestrates turns and retains its public API. `CombatSpellZoneResolver` owns spell targeting, concentration, timed aid, and persistent zones. `CombatManeuverResolver` owns weapon attacks, martial maneuvers, and combat class features.
+- UUID-keyed network sessions retain draft rolls and synchronize the sheet and encounter after respawn or dimension travel. Encounters pause while a participant is in another dimension or waiting to respawn. Rituals keep their remaining time across a player replacement and can resume at the original casting site.
+- DM observers see a read-only initiative ribbon, and the client uses the server's reaction window duration when the optional Protocol v2 update channel is available. The Tavern Keeper, Merchant, and Town Guard have localized starter dialogue and no attacks.
 
 ## Phase 0 files
 

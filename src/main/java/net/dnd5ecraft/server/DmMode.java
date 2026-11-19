@@ -1,6 +1,8 @@
 package net.dnd5ecraft.server;
 
 import net.dnd5ecraft.entity.DndNpcEntity;
+import net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.network.chat.Component;
@@ -8,7 +10,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.GameType;
 
 public final class DmMode {
-    private static final java.util.Map<ServerPlayer, DndNpcEntity> POSSESSED = new java.util.HashMap<>();
+    private static final java.util.Map<java.util.UUID, DndNpcEntity> POSSESSED = new java.util.HashMap<>();
     private static final String TAG_PREFIX = "dnd-5e-craft.dm.";
 
     private DmMode() {}
@@ -16,10 +18,23 @@ public final class DmMode {
     public static void register() {
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> release(handler.player));
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> leave(handler.player));
+        ServerPlayerEvents.COPY_FROM.register((previous, current, alive) ->
+                previous.getTags().stream().filter(tag -> tag.startsWith(TAG_PREFIX)).forEach(current::addTag));
+        ServerPlayerEvents.AFTER_RESPAWN.register((previous, current, alive) -> {
+            var npc = POSSESSED.remove(previous.getUUID());
+            if (npc == null) return;
+            if (npc.isAlive() && npc.level() == current.level() && current.hasPermissions(2) && active(current)) {
+                POSSESSED.put(current.getUUID(), npc);
+                current.setCamera(npc);
+            } else npc.setPossessingDm(null);
+        });
+        ServerEntityWorldChangeEvents.AFTER_PLAYER_CHANGE_WORLD.register((player, previous, destination) -> {
+            if (POSSESSED.containsKey(player.getUUID())) release(player);
+        });
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             for (ServerPlayer player : server.getPlayerList().getPlayers()) {
                 if (active(player) && !player.hasPermissions(2)) leave(player);
-                DndNpcEntity npc = POSSESSED.get(player);
+                DndNpcEntity npc = POSSESSED.get(player.getUUID());
                 if (npc != null && (player.getCamera() != npc || !npc.isAlive() || player.level() != npc.level())) release(player);
             }
         });
@@ -70,11 +85,11 @@ public final class DmMode {
         }
         release(player);
         npc.setPossessingDm(player.getUUID());
-        POSSESSED.put(player, npc);
+        POSSESSED.put(player.getUUID(), npc);
         player.setCamera(npc);
     }
     public static void release(ServerPlayer player) {
-        DndNpcEntity npc = POSSESSED.remove(player);
+        DndNpcEntity npc = POSSESSED.remove(player.getUUID());
         if (npc != null && npc.possessingDmUuid().filter(player.getUUID()::equals).isPresent()) npc.setPossessingDm(null);
         player.setCamera(player);
     }

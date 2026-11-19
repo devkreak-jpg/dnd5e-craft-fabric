@@ -6,6 +6,7 @@ import java.util.UUID;
 import java.util.WeakHashMap;
 import net.dnd5ecraft.dialogue.DialogueNode;
 import net.dnd5ecraft.dialogue.DialogueTree;
+import net.dnd5ecraft.dialogue.DialogueText;
 import net.dnd5ecraft.entity.DndNpcEntity;
 import net.dnd5ecraft.network.ModPackets;
 import net.dnd5ecraft.network.Protocol;
@@ -99,12 +100,12 @@ public final class DialogueSessions {
         if (ModPackets.supports(player)) {
             var attitude = npc.attitudeFor(player.getUUID());
             ModPackets.sendDialogue(player, new Protocol.Dialogue(token, npc.getDisplayName().getString(), node.text(), attitude,
-                    node.choices().stream().map(choice -> ModPackets.option(choice, attitude)).toList()));
+                    node.choices().stream().map(choice -> ModPackets.option(choice, attitude)).toList()), npc.getName());
             return;
         }
-        player.sendSystemMessage(Component.empty().append(npc.getDisplayName()).append(": ").append(node.text()));
+        player.sendSystemMessage(Component.empty().append(npc.getDisplayName()).append(": ").append(DialogueText.component(node.text())));
         for (var choice : node.choices()) {
-            player.sendSystemMessage(Component.literal("[" + choice.label() + "]").withStyle(style ->
+            player.sendSystemMessage(Component.literal("[").append(DialogueText.component(choice.label())).append("]").withStyle(style ->
                     style.withColor(ChatFormatting.GOLD).withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND,
                             "/dnd choose " + choice.id()))));
         }

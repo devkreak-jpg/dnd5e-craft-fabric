@@ -22,7 +22,7 @@ public abstract class PlayerMovementLockMixin {
     @Inject(method = "handleMovePlayer", at = @At("HEAD"), cancellable = true)
     @Unique
     private void dnd5e$keepTacticalPosition(ServerboundMovePlayerPacket packet, CallbackInfo callback) {
-        if (!player.serverLevel().getServer().isSameThread() || !packet.hasPosition()) return;
+        if (player == null || player.connection == null || !player.serverLevel().getServer().isSameThread() || !packet.hasPosition()) return;
         if (!TacticalCombat.isLocked(player) && !CinematicFreeze.frozen(player) && !PlayerSheets.unconscious(player)) return;
         double dx = packet.getX(player.getX()) - player.getX();
         double dy = packet.getY(player.getY()) - player.getY();

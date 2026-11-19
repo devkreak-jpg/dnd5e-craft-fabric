@@ -56,7 +56,7 @@ public final class ModKeybinds {
                 previousCamera = null;
                 return;
             }
-            boolean tactical = ClientDndState.combat() != null;
+            boolean tactical = ClientDndState.controlsCombatant();
             if (tactical && previousCamera == null && !ClientDndState.state().dm()) {
                 previousCamera = client.options.getCameraType();
                 if (previousCamera == CameraType.FIRST_PERSON) client.options.setCameraType(CameraType.THIRD_PERSON_BACK);
@@ -95,7 +95,7 @@ public final class ModKeybinds {
             ClientPacketHandlers.openSheet();
             return true;
         }
-        if (disengage != null && disengage.matches(key, scancode) && ClientDndState.combat() != null
+        if (disengage != null && disengage.matches(key, scancode) && ClientDndState.controlsCombatant()
                 && client.options.keyLoadHotbarActivator.matches(key, scancode)) {
             ClientPacketHandlers.send(Action.DISENGAGE);
             return true;
@@ -109,7 +109,7 @@ public final class ModKeybinds {
             if (action == GLFW.GLFW_RELEASE) client.options.keyJump.setDown(false);
             return false;
         }
-        if (ClientDndState.combat() == null) {
+        if (!ClientDndState.controlsCombatant()) {
             client.options.keyJump.setDown(action != GLFW.GLFW_RELEASE);
         } else {
             client.options.keyJump.setDown(false);

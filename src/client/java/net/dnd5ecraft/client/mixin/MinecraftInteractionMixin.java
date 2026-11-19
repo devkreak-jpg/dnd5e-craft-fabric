@@ -27,6 +27,6 @@ public abstract class MinecraftInteractionMixin {
     @Inject(method = "continueAttack", at = @At("HEAD"), cancellable = true)
     @Unique
     private void dnd5e$skipTacticalMining(boolean attacking, CallbackInfo callback) {
-        if (attacking && ClientDndState.combat() != null) callback.cancel();
+        if (attacking && ClientDndState.controlsCombatant()) callback.cancel();
     }
 }

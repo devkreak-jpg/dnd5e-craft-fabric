@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import net.dnd5ecraft.combat.GridMovementTracker.Cell;
+import net.dnd5ecraft.combat.ReactionWindowManager;
 import net.dnd5ecraft.combat.ReactionWindowManager.Kind;
 import net.dnd5ecraft.combat.TurnEconomy.Resource;
 import net.dnd5ecraft.dialogue.NpcAttitude;
@@ -17,6 +18,7 @@ import net.dnd5ecraft.rules.conditions.DeathSaveTracker;
 import net.dnd5ecraft.rules.spells.AoEGeometry.Vec3;
 
 public final class Protocol {
+    static final UUID NO_ACTOR = new UUID(0, 0);
     public static final int VERSION = 2;
     public static final int MAX_REQUEST = 16_000;
     public static final int MAX_COMBATANTS = 64;
@@ -34,12 +36,27 @@ public final class Protocol {
     public record Slots(List<Integer> regular, List<Integer> pact) {
         public Slots { regular = List.copyOf(regular); pact = List.copyOf(pact); }
 
+        public static final Slots EMPTY = new Slots(java.util.Collections.nCopies(9, 0), java.util.Collections.nCopies(9, 0));
+
         public int available(int level, boolean usePact) {
-            return level >= 1 && level <= 9 ? (usePact ? pact : regular).get(level - 1) : 0;
+            var pool = usePact ? pact : regular;
+            return level >= 1 && level <= pool.size() && level <= 9 ? pool.get(level - 1) : 0;
         }
     }
-    public record Reaction(long id, int millisecondsLeft, List<Kind> choices) {
-        public Reaction { choices = List.copyOf(choices); }
+    public record Reaction(long id, int millisecondsLeft, List<Kind> choices, int totalDurationMs) {
+        public Reaction(long id, int millisecondsLeft, List<Kind> choices) {
+            this(id, millisecondsLeft, choices, ReactionWindowManager.WINDOW_MILLIS);
+        }
+
+        public Reaction {
+            choices = List.copyOf(choices);
+            if (totalDurationMs <= 0) totalDurationMs = ReactionWindowManager.WINDOW_MILLIS;
+            millisecondsLeft = Math.max(0, Math.min(totalDurationMs, millisecondsLeft));
+        }
+
+        public double progress(long remainingMs) {
+            return Math.max(0, Math.min(1, remainingMs / (double) totalDurationMs));
+        }
     }
     public record Combat(UUID id, UUID controlledActor, UUID activeActor, int round, boolean paused,
                          List<Creature> initiative, Set<Resource> resources, int movement,
@@ -47,10 +64,8 @@ public final class Protocol {
                          List<String> spells, Slots slots, Reaction reaction) {
         public Combat {
             initiative = List.copyOf(initiative);
-            if (initiative.isEmpty() || initiative.stream().noneMatch(entry -> entry.id().equals(controlledActor))
-                    || initiative.stream().noneMatch(entry -> entry.id().equals(activeActor))) {
-                throw new IllegalArgumentException("Combat actor is missing from the synchronized roster");
-            }
+            if (NO_ACTOR.equals(controlledActor)) controlledActor = null;
+            if (NO_ACTOR.equals(activeActor)) activeActor = null;
             resources = Set.copyOf(resources);
             reachable = Map.copyOf(reachable);
             threats = Map.copyOf(threats);
@@ -58,7 +73,8 @@ public final class Protocol {
             spells = List.copyOf(spells);
         }
 
-        public boolean ownsTurn() { return controlledActor.equals(activeActor) && !paused; }
+        public boolean hasActor() { return creature(controlledActor) != null; }
+        public boolean ownsTurn() { return !paused && activeActor != null && activeActor.equals(controlledActor) && hasActor(); }
         public TurnToken turn() { return new TurnToken(id, activeActor, round); }
         public Creature creature(UUID id) { return initiative.stream().filter(actor -> actor.id().equals(id)).findFirst().orElse(null); }
     }

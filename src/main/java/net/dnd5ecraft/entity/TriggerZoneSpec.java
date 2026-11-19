@@ -20,7 +20,7 @@ public record TriggerZoneSpec(Cell min, Cell max, Mode mode, int cooldownTicks, 
         Objects.requireNonNull(ambusher);
         if (!axisValid(min.x(), max.x()) || !axisValid(min.y(), max.y()) || !axisValid(min.z(), max.z())
                 || cooldownTicks < 5 || cooldownTicks > 72_000 || damage < 1 || damage > 100
-                || ambushers < 1 || ambushers > 8 || !validDc(perceptionDc) || !validDc(investigationDc)
+                || ambushers < 1 || ambushers > 8 || mode != Mode.TRAP && ambusher.civilian() || !validDc(perceptionDc) || !validDc(investigationDc)
                 || !validDc(disarmDc) || !validDc(saveDc) || Objects.requireNonNull(title).length() > 100) {
             throw new IllegalArgumentException("Invalid trigger zone dimensions or settings");
         }

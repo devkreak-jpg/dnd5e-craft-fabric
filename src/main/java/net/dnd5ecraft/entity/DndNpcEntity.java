@@ -92,12 +92,12 @@ public final class DndNpcEntity extends PathfinderMob {
         goalSelector.addGoal(6, new LookAtPlayerGoal(this, Player.class, 8));
         goalSelector.addGoal(7, new RandomLookAroundGoal(this));
         targetSelector.addGoal(1, new NearestAttackableTargetGoal<>(this, Player.class, 10, true, false,
-                player -> !player.isSpectator() && attitudeFor(player.getUUID()) == NpcAttitude.HOSTILE));
+                player -> !preset().civilian() && !player.isSpectator() && attitudeFor(player.getUUID()) == NpcAttitude.HOSTILE));
     }
 
     @Override
     public void setTarget(LivingEntity target) {
-        if (target instanceof Player player && attitudeFor(player.getUUID()) != NpcAttitude.HOSTILE) return;
+        if (target != null && (preset().civilian() || target instanceof Player player && attitudeFor(player.getUUID()) != NpcAttitude.HOSTILE)) return;
         super.setTarget(target);
     }
 
@@ -129,7 +129,7 @@ public final class DndNpcEntity extends PathfinderMob {
         dialogue = java.util.Objects.requireNonNull(tree);
     }
 
-    public NpcAttitude attitude() { return NpcAttitude.values()[entityData.get(ATTITUDE)]; }
+    public NpcAttitude attitude() { return NpcAttitude.fromIndex(entityData.get(ATTITUDE)); }
 
     public NpcAttitude attitudeFor(UUID player) { return attitudes.getOrDefault(player, attitude()); }
 
@@ -147,6 +147,7 @@ public final class DndNpcEntity extends PathfinderMob {
     public void initializePreset(BestiaryPreset preset, NpcAttitude attitude) {
         if (level().isClientSide || TacticalCombat.isLocked(this)) throw new IllegalStateException("Cannot change an active NPC");
         applyPreset(preset);
+        setDialogue(BestiaryRegistry5e.starterDialogue(preset));
         bestiary = new BestiaryTurnState(preset);
         death = DeathSaveTracker.CONSCIOUS;
         syncCombatHealth(new HitPoints(preset.maxHp(), preset.maxHp(), 0, 0), DeathSaveTracker.CONSCIOUS);
@@ -159,9 +160,9 @@ public final class DndNpcEntity extends PathfinderMob {
         java.util.Objects.requireNonNull(getAttribute(Attributes.MAX_HEALTH)).setBaseValue(preset.maxHp());
         java.util.Objects.requireNonNull(getAttribute(Attributes.ARMOR)).setBaseValue(Math.max(0, preset.armor() - 10));
         java.util.Objects.requireNonNull(getAttribute(Attributes.MOVEMENT_SPEED)).setBaseValue(preset.speedFeet() / 120.0);
-        double damage = preset.attacks().get(0).damage().stream().mapToDouble(part ->
-                part.dice().count() * (part.dice().sides() + 1) / 2.0 + part.modifier()).sum();
-        java.util.Objects.requireNonNull(getAttribute(Attributes.ATTACK_DAMAGE)).setBaseValue(Math.max(1, damage));
+        double damage = preset.baseAttackDamage();
+        java.util.Objects.requireNonNull(getAttribute(Attributes.ATTACK_DAMAGE)).setBaseValue(damage);
+        if (preset.civilian()) setTarget(null);
     }
 
     @Override
@@ -262,6 +263,7 @@ public final class DndNpcEntity extends PathfinderMob {
             reportInvalid("preset", invalidPreset);
         }
         applyPreset(preset);
+        dialogue = BestiaryRegistry5e.starterDialogue(preset);
         if (tag.contains("DndScale", Tag.TAG_FLOAT)) {
             try {
                 setAppearance(tag.getString("DndSkin"), tag.getFloat("DndScale"));
@@ -295,7 +297,7 @@ public final class DndNpcEntity extends PathfinderMob {
         }
         if (tag.contains("DndDialogue", Tag.TAG_COMPOUND)) {
             try {
-                setDialogue(DialogueNbt.read(tag.getCompound("DndDialogue")));
+                setDialogue(DialogueNbt.readStored(tag.getCompound("DndDialogue")));
             } catch (IllegalArgumentException invalidDialogue) {
                 reportInvalid("dialogue", invalidDialogue);
             }

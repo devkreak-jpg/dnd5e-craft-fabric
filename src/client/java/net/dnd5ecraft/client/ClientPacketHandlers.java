@@ -15,32 +15,55 @@ import net.dnd5ecraft.network.Protocol.Update;
 import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.entity.BestiaryPreset;
 import net.dnd5ecraft.rules.character.CharacterSheetData;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 
 import static net.dnd5ecraft.network.PacketCodec.*;
 
 public final class ClientPacketHandlers {
+    private static LocalPlayer synchronizedPlayer;
+    private static ClientLevel synchronizedLevel;
+
     private ClientPacketHandlers() {}
 
     public static void register() {
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> client.execute(() -> {
-            ClientDndState.reset();
-            send(Action.SYNC);
-        }));
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(ClientDndState::reset));
-        ClientPlayNetworking.registerGlobalReceiver(ModPackets.UPDATE, (client, handler, buf, response) -> {
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> client.execute(ClientPacketHandlers::reset));
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(ClientPacketHandlers::reset));
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (client.player == null || client.level == null || !ClientPlayNetworking.canSend(ModPackets.REQUEST)) return;
+            if (client.player != synchronizedPlayer || client.level != synchronizedLevel) {
+                if (client.level != synchronizedLevel) ClientDndState.clearWorldEffects();
+                synchronizedPlayer = client.player;
+                synchronizedLevel = client.level;
+                send(Action.SYNC);
+            }
+        });
+        receive(ModPackets.UPDATE, false);
+        receive(ModPackets.TIMED_UPDATE, true);
+    }
+
+    private static void reset() {
+        synchronizedPlayer = null;
+        synchronizedLevel = null;
+        ClientDndState.reset();
+    }
+
+    private static void receive(net.minecraft.resources.ResourceLocation channel, boolean timed) {
+        ClientPlayNetworking.registerGlobalReceiver(channel, (client, handler, buf, response) -> {
             if (buf.readableBytes() > Protocol.MAX_UPDATE) return;
             try {
                 if (buf.readVarInt() != Protocol.VERSION) return;
-                Consumer<Minecraft> update = decode(readEnum(buf, Update.class), buf);
+                Consumer<Minecraft> update = decode(readEnum(buf, Update.class), buf, timed);
                 if (buf.isReadable()) return;
                 client.execute(() -> {
-                    if (client.getConnection() == handler && client.player != null) update.accept(client);
+                    if (client.getConnection() == handler && client.player != null && client.level != null) update.accept(client);
                 });
             } catch (RuntimeException malformed) {
                 // Ignore protocol or payloads the client cannot decode.
@@ -51,6 +74,8 @@ public final class ClientPacketHandlers {
     public static boolean send(Action action) { return send(action, buf -> {}); }
 
     public static boolean send(Action action, Consumer<FriendlyByteBuf> write) {
+        var client = Minecraft.getInstance();
+        if (client.player == null || client.level == null) return false;
         if (!ClientPlayNetworking.canSend(ModPackets.REQUEST)) {
             ClientDndState.notify(Component.translatable("dnd-5e-craft.net.unavailable"));
             return false;
@@ -77,10 +102,10 @@ public final class ClientPacketHandlers {
         return true;
     }
 
-    private static Consumer<Minecraft> decode(Update kind, FriendlyByteBuf buf) {
+    private static Consumer<Minecraft> decode(Update kind, FriendlyByteBuf buf, boolean timed) {
         return switch (kind) {
             case STATE -> {
-                var snapshot = state(buf);
+                var snapshot = state(buf, timed);
                 yield client -> {
                     ClientDndState.state(snapshot);
                     var combat = snapshot.combat();

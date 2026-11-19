@@ -35,7 +35,7 @@ public final class CharacterCreationScreen extends DndScreen {
         int x = left + 12;
         int col = (innerWidth() - 10) / 2;
         if (page == 0) {
-            if (character.isEmpty() && minecraft.player != null) character = minecraft.player.getGameProfile().getName();
+            if (character.isEmpty() && minecraft != null && minecraft.player != null) character = minecraft.player.getGameProfile().getName();
             characterInput = edit("field.name", character, x, top + 42, innerWidth(), 32);
             characterInput.setResponder(value -> character = value);
             cycle("race", race, RaceType.values(), x, top + 67, col, value -> {

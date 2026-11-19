@@ -63,12 +63,12 @@ public final class CharacterSheetScreen extends DndScreen {
         }
     }
 
-    @Override public void tick() {
+    @Override protected void tickInWorld() {
         if (displayedRows != lines().size() || canRest() != restingAvailable) rebuild();
     }
 
     private boolean canRest() {
-        return ClientDndState.sheet() != null && ClientDndState.combat() == null
+        return ClientDndState.sheet() != null && !ClientDndState.controlsCombatant()
                 && ClientDndState.sheet().deathSaves().state() == net.dnd5ecraft.rules.conditions.DeathSaveTracker.State.CONSCIOUS;
     }
 

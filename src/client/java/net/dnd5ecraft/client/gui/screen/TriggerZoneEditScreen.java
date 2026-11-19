@@ -4,6 +4,7 @@ import net.dnd5ecraft.client.ClientDndState;
 import net.dnd5ecraft.client.ClientPacketHandlers;
 import net.dnd5ecraft.combat.GridMovementTracker.Cell;
 import net.dnd5ecraft.entity.BestiaryPreset;
+import net.dnd5ecraft.entity.BestiaryRegistry5e;
 import net.dnd5ecraft.entity.TriggerZoneSpec;
 import net.dnd5ecraft.entity.TriggerZoneSpec.Mode;
 import net.dnd5ecraft.network.PacketCodec;
@@ -79,8 +80,8 @@ public final class TriggerZoneEditScreen extends DndScreen {
         } else {
             numeric("zone.count", count, x + col + 6, top + 131, col, false).setResponder(value -> count = value);
             button(Component.translatable("entity.dnd-5e-craft.npc." + ambusher.id()), x + 2 * (col + 6), top + 131, col, () -> {
-                var all = BestiaryPreset.values();
-                ambusher = all[(ambusher.ordinal() + 1) % all.length];
+                var all = BestiaryRegistry5e.ambushers();
+                ambusher = all.get((all.indexOf(ambusher) + 1) % all.size());
                 rebuild();
             });
         }

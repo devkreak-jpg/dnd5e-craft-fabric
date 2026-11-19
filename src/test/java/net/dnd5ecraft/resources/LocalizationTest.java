@@ -10,8 +10,10 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import net.dnd5ecraft.combat.ReactionWindowManager;
 import net.dnd5ecraft.combat.TurnEconomy;
+import net.dnd5ecraft.dialogue.DialogueTree;
 import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.entity.BestiaryPreset;
+import net.dnd5ecraft.entity.BestiaryRegistry5e;
 import net.dnd5ecraft.entity.TriggerZoneSpec;
 import net.dnd5ecraft.network.Protocol;
 import net.dnd5ecraft.rules.ability.Ability;
@@ -85,6 +87,21 @@ final class LocalizationTest {
             assertTrue(keys.contains("item.dnd-5e-craft." + id), id);
         }
         assertTrue(keys.contains("itemGroup.dnd-5e-craft.tools"));
+    }
+
+    @Test
+    void localizesObserverBadgeAndEveryBuiltInDialogueBranch() throws Exception {
+        Set<String> keys = translations("en_us").keySet();
+        assertTrue(keys.contains(UI + "hud.dm_observing"));
+        var trees = new java.util.ArrayList<DialogueTree>();
+        trees.add(DialogueTree.defaultTree());
+        BestiaryRegistry5e.civilians().forEach(preset -> trees.add(BestiaryRegistry5e.starterDialogue(preset)));
+        for (var tree : trees) {
+            for (var node : tree.nodes()) {
+                assertTrue(keys.contains(node.text()), node.text());
+                node.choices().forEach(choice -> assertTrue(keys.contains(choice.label()), choice.label()));
+            }
+        }
     }
 
     private static List<String> placeholders(String value) {

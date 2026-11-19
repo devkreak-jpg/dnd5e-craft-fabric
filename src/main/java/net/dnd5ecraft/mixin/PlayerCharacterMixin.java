@@ -45,7 +45,8 @@ public abstract class PlayerCharacterMixin implements PlayerCharacter {
     @Override
     @Unique
     public float dnd5e$physicalScale() {
-        return dnd5e$player().getEntityData().get(dnd5e$scaleData);
+        var data = dnd5e$player().getEntityData();
+        return data != null && data.hasItem(dnd5e$scaleData) ? data.get(dnd5e$scaleData) : 1f;
     }
 
     @Override

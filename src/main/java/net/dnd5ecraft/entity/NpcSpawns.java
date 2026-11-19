@@ -13,7 +13,7 @@ public final class NpcSpawns {
                 || level.isOutsideBuildHeight(position)) return Optional.empty();
         DndNpcEntity npc = ModEntities.DND_NPC.create(level);
         if (npc == null) return Optional.empty();
-        npc.initializePreset(preset, attitude);
+        npc.initializePreset(preset, preset.civilian() ? NpcAttitude.FRIENDLY : attitude);
         npc.moveTo(position.getX() + .5, position.getY(), position.getZ() + .5, 0, 0);
         if (!level.noCollision(npc)) return Optional.empty();
         return level.addFreshEntity(npc) ? Optional.of(npc) : Optional.empty();

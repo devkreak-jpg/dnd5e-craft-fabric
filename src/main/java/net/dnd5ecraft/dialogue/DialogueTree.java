@@ -12,6 +12,7 @@ import net.dnd5ecraft.rules.ability.AbilityCheckEngine.RollMode;
 import net.dnd5ecraft.rules.ability.Skill;
 
 public final class DialogueTree {
+    public static final String BUILTIN_PREFIX = "dnd-5e-craft.dialogue.builtin.";
     public record Selection(DialogueChoice.Outcome outcome, Optional<CheckResult> check) {}
 
     private final String start;
@@ -64,11 +65,26 @@ public final class DialogueTree {
     public static DialogueTree defaultTree() {
         var success = new DialogueChoice.Outcome(Optional.of("welcome"), Optional.of(NpcAttitude.FRIENDLY));
         return new DialogueTree("meeting", List.of(
-                new DialogueNode("meeting", "The stranger sizes you up before speaking.", List.of(
-                        new DialogueChoice("parley", "Ask for a peaceful word", Optional.of(new DialogueChoice.Check(Skill.PERSUASION, 13)),
+                new DialogueNode("meeting", BUILTIN_PREFIX + "stranger.greeting", List.of(
+                        new DialogueChoice("parley", BUILTIN_PREFIX + "stranger.parley", Optional.of(new DialogueChoice.Check(Skill.PERSUASION, 13)),
                                 success, DialogueChoice.Outcome.goTo("refusal")),
-                        DialogueChoice.direct("leave", "Step away", DialogueChoice.Outcome.end()))),
-                new DialogueNode("welcome", "Very well. We can talk without drawing blades.", List.of()),
-                new DialogueNode("refusal", "I will keep my distance. You should do the same.", List.of())));
+                        DialogueChoice.direct("leave", BUILTIN_PREFIX + "leave", DialogueChoice.Outcome.end()))),
+                new DialogueNode("welcome", BUILTIN_PREFIX + "stranger.welcome", List.of()),
+                new DialogueNode("refusal", BUILTIN_PREFIX + "stranger.refusal", List.of())));
+    }
+
+    /** Role-specific starter dialogue. Both choices lead to valid, distinct branches. */
+    public static DialogueTree civilian(String role) {
+        DialogueChoice.requireId(role);
+        String key = BUILTIN_PREFIX + role + ".";
+        return new DialogueTree("meeting", List.of(
+                new DialogueNode("meeting", key + "greeting", List.of(
+                        DialogueChoice.direct("service", key + "service", DialogueChoice.Outcome.goTo("offer")),
+                        DialogueChoice.direct("news", key + "news", DialogueChoice.Outcome.goTo("rumor")),
+                        DialogueChoice.direct("leave", BUILTIN_PREFIX + "leave", DialogueChoice.Outcome.end()))),
+                new DialogueNode("offer", key + "offer", List.of(
+                        DialogueChoice.direct("back", BUILTIN_PREFIX + "back", DialogueChoice.Outcome.goTo("meeting")))),
+                new DialogueNode("rumor", key + "rumor", List.of(
+                        DialogueChoice.direct("back", BUILTIN_PREFIX + "back", DialogueChoice.Outcome.goTo("meeting"))))));
     }
 }

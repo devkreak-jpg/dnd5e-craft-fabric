@@ -85,22 +85,26 @@ public final class PacketCodec {
         buf.writeVarInt(turn.round());
     }
 
-    public static State state(FriendlyByteBuf buf) {
+    public static State state(FriendlyByteBuf buf) { return state(buf, false); }
+
+    public static State state(FriendlyByteBuf buf, boolean timed) {
         boolean operator = buf.readBoolean();
         boolean dm = buf.readBoolean();
         int darkvision = PacketPolicy.count(buf.readVarInt(), 240);
-        return new State(operator, dm, darkvision, buf.readBoolean() ? combat(buf) : null);
+        return new State(operator, dm, darkvision, buf.readBoolean() ? combat(buf, timed) : null);
     }
 
-    public static void state(FriendlyByteBuf buf, State state) {
+    public static void state(FriendlyByteBuf buf, State state) { state(buf, state, false); }
+
+    public static void state(FriendlyByteBuf buf, State state, boolean timed) {
         buf.writeBoolean(state.operator());
         buf.writeBoolean(state.dm());
         buf.writeVarInt(state.darkvision());
         buf.writeBoolean(state.combat() != null);
-        if (state.combat() != null) combat(buf, state.combat());
+        if (state.combat() != null) combat(buf, state.combat(), timed);
     }
 
-    private static Combat combat(FriendlyByteBuf buf) {
+    private static Combat combat(FriendlyByteBuf buf, boolean timed) {
         UUID id = buf.readUUID();
         UUID actor = buf.readUUID();
         UUID active = buf.readUUID();
@@ -121,15 +125,20 @@ public final class PacketCodec {
         var attacks = readList(buf, 16, value -> value.readUtf(80));
         var spells = readList(buf, 80, value -> value.readUtf(64));
         Slots slots = new Slots(readSlots(buf), readSlots(buf));
-        Reaction reaction = buf.readBoolean() ? new Reaction(buf.readVarLong(), buf.readVarInt(),
-                readList(buf, Kind.values().length, value -> readEnum(value, Kind.class))) : null;
+        Reaction reaction = null;
+        if (buf.readBoolean()) {
+            long window = buf.readVarLong();
+            int remaining = buf.readVarInt();
+            var choices = readList(buf, Kind.values().length, value -> readEnum(value, Kind.class));
+            reaction = timed ? new Reaction(window, remaining, choices, buf.readVarInt()) : new Reaction(window, remaining, choices);
+        }
         return new Combat(id, actor, active, round, paused, creatures, resources, movement, cells, threats, attacks, spells, slots, reaction);
     }
 
-    private static void combat(FriendlyByteBuf buf, Combat state) {
+    private static void combat(FriendlyByteBuf buf, Combat state, boolean timed) {
         buf.writeUUID(state.id());
-        buf.writeUUID(state.controlledActor());
-        buf.writeUUID(state.activeActor());
+        buf.writeUUID(state.controlledActor() == null ? Protocol.NO_ACTOR : state.controlledActor());
+        buf.writeUUID(state.activeActor() == null ? Protocol.NO_ACTOR : state.activeActor());
         buf.writeVarInt(state.round());
         buf.writeBoolean(state.paused());
         writeList(buf, state.initiative(), PacketCodec::creature);
@@ -151,6 +160,7 @@ public final class PacketCodec {
             buf.writeVarLong(reaction.id());
             buf.writeVarInt(reaction.millisecondsLeft());
             writeList(buf, reaction.choices(), PacketCodec::writeEnum);
+            if (timed) buf.writeVarInt(reaction.totalDurationMs());
         }
     }
 

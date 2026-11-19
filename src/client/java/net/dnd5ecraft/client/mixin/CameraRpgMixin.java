@@ -28,7 +28,8 @@ public abstract class CameraRpgMixin {
     @Unique
     private void dnd5e$tacticalCamera(BlockGetter level, Entity viewer, boolean detached, boolean reverse,
             float delta, CallbackInfo callback) {
-        if (ClientDndState.combat() != null && detached && !reverse) {
+        if (viewer == null || level == null) return;
+        if (ClientDndState.controlsCombatant() && detached && !reverse) {
             Vec3 base = getPosition();
             move(0, .18, .52);
             var collision = level.clip(new ClipContext(base, getPosition(), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, viewer));

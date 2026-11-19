@@ -15,8 +15,10 @@ import net.dnd5ecraft.combat.ReactionWindowManager.Kind;
 import net.dnd5ecraft.dialogue.DialogueChoice;
 import net.dnd5ecraft.dialogue.DialogueNode;
 import net.dnd5ecraft.dialogue.DialogueTree;
+import net.dnd5ecraft.dialogue.DialogueText;
 import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.entity.BestiaryPreset;
+import net.dnd5ecraft.entity.BestiaryRegistry5e;
 import net.dnd5ecraft.entity.DndNpcEntity;
 import net.dnd5ecraft.entity.NpcSpawns;
 import net.dnd5ecraft.entity.TriggerZoneBlockEntity;
@@ -37,6 +39,9 @@ import net.dnd5ecraft.server.DialogueSessions;
 import net.dnd5ecraft.server.DmMode;
 import net.dnd5ecraft.server.PlayerSheets;
 import net.dnd5ecraft.server.TacticalCombat;
+import net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -44,7 +49,9 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.world.InteractionHand;
@@ -55,8 +62,9 @@ import static net.dnd5ecraft.network.PacketCodec.*;
 public final class ModPackets {
     public static final ResourceLocation REQUEST = Dnd5eCraftMod.id("request");
     public static final ResourceLocation UPDATE = Dnd5eCraftMod.id("update");
+    public static final ResourceLocation TIMED_UPDATE = Dnd5eCraftMod.id("timed_update");
     private static final Map<ServerGamePacketListenerImpl, PacketPolicy.RateLimit> LIMITS = new ConcurrentHashMap<>();
-    private static final Map<ServerPlayer, Session> SESSIONS = new HashMap<>();
+    private static final PlayerSessionStore<Session> SESSIONS = new PlayerSessionStore<>();
 
     private static final class Session {
         State state;
@@ -65,6 +73,13 @@ public final class ModPackets {
         boolean sentSheet;
         List<Integer> rolls = List.of();
         Ritual ritual;
+        Long pausedRitualTicks;
+        boolean timed;
+
+        void invalidateSnapshot() {
+            state = null;
+            sentSheet = false;
+        }
     }
 
     private record Ritual(String spell, ResourceLocation dimension, net.minecraft.world.phys.Vec3 origin,
@@ -102,13 +117,26 @@ public final class ModPackets {
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             LIMITS.remove(handler);
-            SESSIONS.remove(handler.player);
+            SESSIONS.remove(handler.player.getUUID());
+        });
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            SESSIONS.clear();
+            LIMITS.clear();
+        });
+        ServerPlayerEvents.COPY_FROM.register((previous, current, alive) -> session(current).invalidateSnapshot());
+        ServerPlayerEvents.AFTER_RESPAWN.register((previous, current, alive) -> {
+            var session = session(current);
+            if (!alive) pauseRitual(session, previous.serverLevel());
+            playerChangedWorld(current, previous.serverLevel(), session);
+            sync(current);
+        });
+        ServerEntityWorldChangeEvents.AFTER_PLAYER_CHANGE_WORLD.register((player, previous, destination) -> {
+            playerChangedWorld(player, previous, session(player));
+            sync(player);
         });
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             if (server.getTickCount() % 5 != 0) return;
             var players = server.getPlayerList().getPlayers();
-            SESSIONS.keySet().removeIf(player -> server == player.getServer()
-                    && server.getPlayerList().getPlayer(player.getUUID()) != player);
             for (ServerPlayer player : players) {
                 if (supports(player)) {
                     tickRitual(player);
@@ -120,7 +148,7 @@ public final class ModPackets {
 
     private static Consumer<ServerPlayer> decode(Action action, FriendlyByteBuf buf) {
         return switch (action) {
-            case SYNC -> player -> sendSheet(player, false);
+            case SYNC -> player -> session(player).invalidateSnapshot();
             case ROLL -> PhysicalD20Item::roll;
             case REQUEST_ROLL -> {
                 boolean save = buf.readBoolean();
@@ -374,12 +402,35 @@ public final class ModPackets {
         notice(player, Component.translatable("dnd-5e-craft.net.ritual_begin", duration));
     }
 
+    private static void playerChangedWorld(ServerPlayer player, ServerLevel origin, Session session) {
+        TacticalCombat.playerChanged(player, origin);
+        if (origin != player.serverLevel()) pauseRitual(session, origin);
+        session.invalidateSnapshot();
+    }
+
+    private static void pauseRitual(Session session, ServerLevel origin) {
+        if (session.ritual != null && session.pausedRitualTicks == null
+                && session.ritual.dimension().equals(origin.dimension().location())) {
+            session.pausedRitualTicks = Math.max(0, session.ritual.ends() - origin.getGameTime());
+        }
+    }
+
     private static void tickRitual(ServerPlayer player) {
         var session = session(player);
         var ritual = session.ritual;
-        if (ritual == null) return;
-        if (!player.isAlive() || player.isSpectator() || TacticalCombat.isLocked(player) || player.getHealth() < ritual.health
-                || !player.level().dimension().location().equals(ritual.dimension) || player.position().distanceToSqr(ritual.origin) > .25) {
+        if (ritual == null || !player.level().dimension().location().equals(ritual.dimension)) return;
+        if (!player.isAlive()) {
+            pauseRitual(session, player.serverLevel());
+            return;
+        }
+        if (session.pausedRitualTicks != null) {
+            ritual = new Ritual(ritual.spell, ritual.dimension, ritual.origin, ritual.health,
+                    player.serverLevel().getGameTime() + session.pausedRitualTicks);
+            session.ritual = ritual;
+            session.pausedRitualTicks = null;
+        }
+        if (player.isSpectator() || TacticalCombat.isLocked(player) || player.getHealth() < ritual.health
+                || player.position().distanceToSqr(ritual.origin) > .25) {
             session.ritual = null;
             notice(player, Component.translatable("dnd-5e-craft.net.ritual_interrupted"));
         } else if (player.serverLevel().getGameTime() >= ritual.ends) {
@@ -450,10 +501,16 @@ public final class ModPackets {
         }
         var node = new DialogueNode(original.id(), edit.greeting(), options);
         var changed = new DialogueTree(tree.start(), tree.nodes().stream().map(n -> n.id().equals(node.id()) ? node : n).toList());
-        if (npc.preset() != edit.preset()) npc.initializePreset(edit.preset(), edit.attitude());
-        else npc.setAttitude(edit.attitude());
-        npc.setCustomName(Component.literal(edit.name().strip()));
-        npc.setDialogue(changed);
+        var priorPreset = npc.preset();
+        var priorName = npc.getCustomName();
+        boolean defaultName = priorName != null && priorName.getContents() instanceof TranslatableContents translation
+                && translation.getKey().equals(DialogueText.NPC_NAME_PREFIX + priorPreset.id());
+        if (priorPreset != edit.preset()) {
+            npc.initializePreset(edit.preset(), edit.attitude());
+            if (!defaultName) npc.setCustomName(priorName);
+        } else npc.setAttitude(edit.attitude());
+        if (!edit.name().equals(view.name())) npc.setCustomName(Component.literal(edit.name().strip()));
+        npc.setDialogue(BestiaryRegistry5e.dialogueAfterPresetChange(priorPreset, edit.preset(), changed));
         npc.bestiary().setLairEnabled(edit.lair());
         notice(player, Component.translatable("dnd-5e-craft.net.saved"));
         sendNpc(player, npc);
@@ -520,9 +577,16 @@ public final class ModPackets {
     }
 
     public static void sendDialogue(ServerPlayer player, Dialogue dialogue) {
+        sendDialogue(player, dialogue, Component.literal(dialogue.title()));
+    }
+
+    public static void sendDialogue(ServerPlayer player, Dialogue dialogue, Component name) {
+        String title = player.connection != null && ServerPlayNetworking.canSend(player, TIMED_UPDATE)
+                && name.getContents() instanceof TranslatableContents translation
+                && translation.getKey().startsWith(DialogueText.NPC_NAME_PREFIX) ? translation.getKey() : dialogue.title();
         send(player, Update.DIALOGUE, out -> {
             out.writeUUID(dialogue.token());
-            out.writeUtf(trim(dialogue.title(), 80), 80);
+            out.writeUtf(trim(title, 80), 80);
             out.writeUtf(dialogue.text(), 1024);
             writeEnum(out, dialogue.attitude());
             writeList(out, dialogue.options(), PacketCodec::dialogueOption);
@@ -599,11 +663,15 @@ public final class ModPackets {
     private static void sync(ServerPlayer player) {
         if (!supports(player)) return;
         var session = session(player);
+        boolean timed = ServerPlayNetworking.canSend(player, TIMED_UPDATE);
+        var combat = TacticalCombat.networkView(player);
+        if (!timed && combat != null && (!combat.hasActor() || combat.activeActor() == null)) combat = null;
         var selected = new State(player.hasPermissions(2), player.hasPermissions(2) && DmMode.active(player),
-                TacticalCombat.networkDarkvision(player), TacticalCombat.networkView(player));
-        if (!selected.equals(session.state)) {
-            send(player, Update.STATE, out -> state(out, selected));
+                TacticalCombat.networkDarkvision(player), combat);
+        if (!selected.equals(session.state) || timed != session.timed) {
+            send(player, timed ? TIMED_UPDATE : UPDATE, Update.STATE, out -> state(out, selected, timed));
             session.state = selected;
+            session.timed = timed;
         }
         var currentSheet = PlayerSheets.get(player).orElse(null);
         int currentAc = currentSheet == null ? 0 : TacticalCombat.armorClass(player, currentSheet);
@@ -612,9 +680,9 @@ public final class ModPackets {
         }
     }
 
-    private static Session session(ServerPlayer player) { return SESSIONS.computeIfAbsent(player, ignored -> new Session()); }
+    private static Session session(ServerPlayer player) { return SESSIONS.getOrCreate(player.getUUID(), Session::new); }
 
-    public static boolean supports(ServerPlayer player) { return ServerPlayNetworking.canSend(player, UPDATE); }
+    public static boolean supports(ServerPlayer player) { return player.connection != null && ServerPlayNetworking.canSend(player, UPDATE); }
 
     public static void notice(ServerPlayer player, Component message) {
         if (supports(player)) send(player, Update.NOTICE, out -> out.writeComponent(message));
@@ -622,12 +690,16 @@ public final class ModPackets {
     }
 
     private static void send(ServerPlayer player, Update kind, Consumer<FriendlyByteBuf> write) {
-        if (!supports(player)) return;
+        send(player, UPDATE, kind, write);
+    }
+
+    private static void send(ServerPlayer player, ResourceLocation channel, Update kind, Consumer<FriendlyByteBuf> write) {
+        if (player.connection == null || !ServerPlayNetworking.canSend(player, channel)) return;
         FriendlyByteBuf buf = PacketByteBufs.create();
         buf.writeVarInt(Protocol.VERSION);
         writeEnum(buf, kind);
         write.accept(buf);
-        ServerPlayNetworking.send(player, UPDATE, buf);
+        ServerPlayNetworking.send(player, channel, buf);
     }
 
     public static String trim(String value, int length) {

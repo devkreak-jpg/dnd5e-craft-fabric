@@ -35,19 +35,19 @@ public final class ReactionPromptScreen extends DndScreen {
         button(text("hud.decline"), x, bottom() - 25, 100, this::onClose);
     }
 
-    @Override public void tick() {
+    @Override protected void tickInWorld() {
         var combat = ClientDndState.combat();
         if (ClientDndState.reactionRemaining() == 0 || combat == null || combat.reaction() == null
                 || !matches(combat.id(), combat.reaction().id())) minecraft.setScreen(previous);
     }
 
     @Override protected void content(GuiGraphics g, int mouseX, int mouseY) {
-        g.fill(left + 12, bottom() - 48, left + 12 + (int) (innerWidth() * ClientDndState.reactionRemaining() / 3500),
-                bottom() - 45, CRIMSON);
+        drawProgressBar(g, left + 12, bottom() - 48, innerWidth(), 3,
+                reaction.progress(ClientDndState.reactionRemaining()), CRIMSON);
     }
 
     @Override public boolean keyPressed(int key, int scancode, int modifiers) {
-        if (ModKeybinds.matchesRoll(key, scancode) && !reaction.choices().isEmpty()) {
+        if (worldReady() && ModKeybinds.matchesRoll(key, scancode) && !reaction.choices().isEmpty()) {
             ClientActions.react(reaction.choices().get(0), hasShiftDown());
             return true;
         }
@@ -55,7 +55,8 @@ public final class ReactionPromptScreen extends DndScreen {
     }
 
     @Override public void onClose() {
-        ClientActions.react(null, false);
-        minecraft.setScreen(previous);
+        boolean ready = worldReady();
+        if (ready) ClientActions.react(null, false);
+        if (minecraft != null) minecraft.setScreen(ready ? previous : null);
     }
 }

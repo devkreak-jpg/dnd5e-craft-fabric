@@ -2,6 +2,7 @@ package net.dnd5ecraft.item;
 
 import net.dnd5ecraft.dialogue.NpcAttitude;
 import net.dnd5ecraft.entity.BestiaryPreset;
+import net.dnd5ecraft.entity.BestiaryRegistry5e;
 import net.dnd5ecraft.entity.NpcSpawns;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -25,8 +26,8 @@ public final class NpcSpawnerWandItem extends Item {
             if (!WandSelections.allowed(serverPlayer)) return InteractionResultHolder.fail(stack);
             BestiaryPreset preset = selected(stack);
             if (player.isShiftKeyDown()) {
-                var presets = BestiaryPreset.values();
-                preset = presets[(preset.ordinal() + 1) % presets.length];
+                var presets = BestiaryRegistry5e.spawnable();
+                preset = presets.get((presets.indexOf(preset) + 1) % presets.size());
                 stack.getOrCreateTag().putString("Preset", preset.id());
             }
             WandSelections.message(serverPlayer, "dnd-5e-craft.npc.selected",

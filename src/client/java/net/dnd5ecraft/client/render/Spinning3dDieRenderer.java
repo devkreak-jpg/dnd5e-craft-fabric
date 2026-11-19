@@ -19,11 +19,13 @@ public final class Spinning3dDieRenderer {
     public static void register() { WorldRenderEvents.AFTER_ENTITIES.register(Spinning3dDieRenderer::render); }
 
     private static void render(WorldRenderContext context) {
-        if (Minecraft.getInstance().options.hideGui || context.matrixStack() == null || context.consumers() == null) return;
+        var client = Minecraft.getInstance();
+        if (client.player == null || client.level == null || client.options.hideGui || context.matrixStack() == null || context.consumers() == null) return;
         long now = Util.getMillis();
         var camera = context.camera().getPosition();
         for (var die : ClientDndState.dice()) {
             var roll = die.roll();
+            if (roll.result() < 1 || roll.result() > Icosahedron.FACES.size()) continue;
             var pos = roll.position();
             if (camera.distanceToSqr(pos.x(), pos.y(), pos.z()) > 48 * 48) continue;
             double t = Math.min(1, (now - die.started()) / 920.0);

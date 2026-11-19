@@ -36,7 +36,7 @@ public final class SpellbookScreen extends DndScreen {
     public SpellbookScreen() { super(text("spellbook.title")); }
 
     @Override protected void controls() {
-        inCombat = ClientDndState.combat() != null;
+        inCombat = ClientDndState.controlsCombatant();
         availableSpells = spellIds();
         cast = ritual = null;
         int x = left + 12;
@@ -54,7 +54,7 @@ public final class SpellbookScreen extends DndScreen {
         next = button(text("next"), x + listWidth / 2 + 2, bottom() - 25, listWidth / 2 - 2, () -> { page++; refreshList(); });
         search.setResponder(input -> { query = input; page = 0; refreshList(); });
         if (selected != null) {
-            var combat = ClientDndState.combat();
+            var combat = ClientDndState.controlsCombatant() ? ClientDndState.combat() : null;
             if (combat != null && selected.level() > 0) {
                 button(text("spellbook.slot", slot, name("pool", pool)), right, bottom() - 83, details, this::cycleSlot);
             }
@@ -72,9 +72,9 @@ public final class SpellbookScreen extends DndScreen {
         updateActions();
     }
 
-    @Override public void tick() {
+    @Override protected void tickInWorld() {
         var currentSpells = spellIds();
-        if (inCombat != (ClientDndState.combat() != null) || !availableSpells.equals(currentSpells)) {
+        if (inCombat != (ClientDndState.controlsCombatant()) || !availableSpells.equals(currentSpells)) {
             if (selected != null && !currentSpells.contains(selected.id())) selected = null;
             rebuild();
         } else updateActions();
@@ -82,7 +82,7 @@ public final class SpellbookScreen extends DndScreen {
 
     private void updateActions() {
         if (cast != null) {
-            var combat = ClientDndState.combat();
+            var combat = ClientDndState.controlsCombatant() ? ClientDndState.combat() : null;
             cast.active = combat != null && combat.ownsTurn()
                     && (selected.level() == 0 || combat.slots().available(slot, pool == Pool.PACT) > 0);
         }
@@ -108,7 +108,7 @@ public final class SpellbookScreen extends DndScreen {
     private int rowsCount() { return Math.max(2, (panelHeight - 95) / 20); }
 
     private Set<String> spellIds() {
-        var combat = ClientDndState.combat();
+        var combat = ClientDndState.controlsCombatant() ? ClientDndState.combat() : null;
         if (combat != null) return Set.copyOf(combat.spells());
         var sheet = ClientDndState.sheet();
         return sheet == null ? Set.of() : SpellAccess.available(sheet).keySet();
@@ -116,7 +116,7 @@ public final class SpellbookScreen extends DndScreen {
 
     private List<Spell> spells() {
         String filter = query.toLowerCase(Locale.ROOT).strip();
-        return availableSpells.stream().map(SpellRegistry5e::require)
+        return availableSpells.stream().flatMap(id -> SpellRegistry5e.find(id).stream())
                 .filter(spell -> spell.id().contains(filter) || text("spell." + spell.id()).getString().toLowerCase(Locale.ROOT).contains(filter))
                 .sorted(java.util.Comparator.comparingInt(Spell::level).thenComparing(Spell::id)).toList();
     }
@@ -124,18 +124,18 @@ public final class SpellbookScreen extends DndScreen {
     private void select(int row) {
         var spells = spells();
         int position = page * rowsCount() + row;
-        if (position >= spells.size()) return;
+        if (position < 0 || position >= spells.size()) return;
         selected = spells.get(position);
         slot = selected.level();
         pool = Pool.REGULAR;
         choice = 0;
-        var combat = ClientDndState.combat();
+        var combat = ClientDndState.controlsCombatant() ? ClientDndState.combat() : null;
         if (combat != null && slot > 0 && combat.slots().available(slot, false) == 0) cycleSlot();
         else rebuild();
     }
 
     private void cycleSlot() {
-        var combat = ClientDndState.combat();
+        var combat = ClientDndState.controlsCombatant() ? ClientDndState.combat() : null;
         if (combat == null) return;
         for (int i = 0; i < 18; i++) {
             int next = (slot + (pool == Pool.PACT ? 9 : 0)) % 18;
@@ -156,13 +156,15 @@ public final class SpellbookScreen extends DndScreen {
     }
 
     private net.minecraft.network.chat.Component choiceLabel() {
-        Enum<?> value = choices().get(choice % choices().size());
+        var options = choices();
+        if (options.isEmpty()) return text("spellbook.none");
+        Enum<?> value = options.get(Math.floorMod(choice, options.size()));
         return name(value instanceof DamageType5e ? "damage" : "condition", value);
     }
 
     private void aim() {
         var options = choices();
-        ClientActions.startSpell(selected, slot, pool, options.isEmpty() ? null : options.get(choice % options.size()).name());
+        ClientActions.startSpell(selected, slot, pool, options.isEmpty() ? null : options.get(Math.floorMod(choice, options.size())).name());
         minecraft.setScreen(null);
     }
 

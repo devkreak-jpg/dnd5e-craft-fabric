@@ -14,6 +14,7 @@ public final class DialogueNbt {
     public static CompoundTag write(DialogueTree tree) {
         CompoundTag root = new CompoundTag();
         root.putString("Start", tree.start());
+        root.putBoolean("LocalizedDefaults", true);
         ListTag nodes = new ListTag();
         for (DialogueNode node : tree.nodes()) {
             CompoundTag entry = new CompoundTag();
@@ -37,6 +38,37 @@ public final class DialogueNbt {
         }
         root.put("Nodes", nodes);
         return root;
+    }
+
+    public static DialogueTree readStored(CompoundTag root) {
+        var tree = read(root);
+        if (root.getBoolean("LocalizedDefaults") || !tree.start().equals("meeting")) return tree;
+        return new DialogueTree(tree.start(), tree.nodes().stream().map(DialogueNbt::localizeLegacyNode).toList());
+    }
+
+    private static DialogueNode localizeLegacyNode(DialogueNode node) {
+        String text = switch (node.id()) {
+            case "meeting" -> localizeDefault(node.text(), "The stranger sizes you up before speaking.", "stranger.greeting");
+            case "welcome" -> localizeDefault(node.text(), "Very well. We can talk without drawing blades.", "stranger.welcome");
+            case "refusal" -> localizeDefault(node.text(), "I will keep my distance. You should do the same.", "stranger.refusal");
+            default -> node.text();
+        };
+        var choices = node.id().equals("meeting") ? node.choices().stream().map(DialogueNbt::localizeLegacyChoice).toList()
+                : node.choices();
+        return new DialogueNode(node.id(), text, choices);
+    }
+
+    private static DialogueChoice localizeLegacyChoice(DialogueChoice choice) {
+        String label = switch (choice.id()) {
+            case "parley" -> localizeDefault(choice.label(), "Ask for a peaceful word", "stranger.parley");
+            case "leave" -> localizeDefault(choice.label(), "Step away", "leave");
+            default -> choice.label();
+        };
+        return new DialogueChoice(choice.id(), label, choice.check(), choice.success(), choice.failure());
+    }
+
+    private static String localizeDefault(String value, String legacyDefault, String key) {
+        return value.equals(legacyDefault) ? DialogueTree.BUILTIN_PREFIX + key : value;
     }
 
     public static DialogueTree read(CompoundTag root) {

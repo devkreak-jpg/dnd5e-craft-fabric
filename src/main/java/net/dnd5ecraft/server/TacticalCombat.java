@@ -2,13 +2,13 @@ package net.dnd5ecraft.server;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.HashMap;
 import net.dnd5ecraft.combat.CombatEncounterState;
 import net.dnd5ecraft.combat.CombatManager;
 import net.dnd5ecraft.combat.CombatantEntry;
@@ -74,8 +74,9 @@ public final class TacticalCombat {
             if (encounter != null) encounter.tick();
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-            Session session = session(handler.player);
-            if (session != null) session.remove(handler.player);
+            UUID player = handler.player.getUUID();
+            ACTIVE.values().stream().filter(session -> session.level.getServer() == server && session.contains(player))
+                    .toList().forEach(session -> session.remove(player));
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             var levels = ACTIVE.keySet().stream().filter(level -> level.getServer() == server).toList();
@@ -113,7 +114,10 @@ public final class TacticalCombat {
     public static boolean isLocked(LivingEntity entity) { return session(entity) != null; }
 
     public static void requireUnfrozen(ServerPlayer player) {
-        if (CinematicFreeze.active(player.serverLevel())) throw new IllegalStateException("The scene is paused");
+        var session = controlledSession(player);
+        if (CinematicFreeze.active(player.serverLevel()) || session != null && session.paused()) {
+            throw new IllegalStateException("The scene is paused");
+        }
     }
 
     public static CombatManager require(ServerPlayer player) {
@@ -143,7 +147,7 @@ public final class TacticalCombat {
 
     public static TurnToken turnToken(ServerPlayer player) {
         Session session = controlledSession(player);
-        if (session == null || CinematicFreeze.active(session.level) || session.manager.reactionWindow().isPresent()) return null;
+        if (session == null || session.paused() || session.manager.reactionWindow().isPresent()) return null;
         var actor = control(player).actor();
         return session.manager.snapshot().current().filter(actor::equals)
                 .map(current -> new TurnToken(session.id, current, session.state.round())).orElse(null);
@@ -151,7 +155,30 @@ public final class TacticalCombat {
 
     public static Protocol.Combat networkView(ServerPlayer player) {
         Session session = controlledSession(player);
-        return session == null ? null : session.networkView(control(player).actor());
+        if (session != null) return session.networkView(control(player).actor());
+        var suspended = suspendedSession(player);
+        if (suspended != null) return suspended.networkView(null);
+        if (player.hasPermissions(2) && DmMode.active(player)) {
+            var observed = ACTIVE.get(player.serverLevel());
+            if (observed != null) return observed.networkView(null);
+        }
+        return null;
+    }
+
+    public static void playerChanged(ServerPlayer current, ServerLevel origin) {
+        var leaving = ACTIVE.get(origin);
+        UUID id = current.getUUID();
+        if (leaving != null && leaving.entities.get(id) instanceof ServerPlayer enrolled) {
+            if (origin != current.serverLevel()) leaving.suspendPlayer(current);
+            else if (enrolled != current) leaving.replacePlayer(current);
+        }
+        var arriving = ACTIVE.get(current.serverLevel());
+        if (arriving != null && arriving.suspendedPlayers.contains(id)) arriving.replacePlayer(current);
+    }
+
+    private static Session suspendedSession(ServerPlayer player) {
+        return ACTIVE.values().stream().filter(session -> session.level.getServer() == player.getServer()
+                && session.suspendedPlayers.contains(player.getUUID())).findFirst().orElse(null);
     }
 
     public static int networkDarkvision(ServerPlayer player) {
@@ -210,14 +237,14 @@ public final class TacticalCombat {
         ServerLevel level = operator.serverLevel();
         AABB area = operator.getBoundingBox().inflate(20, 8, 20);
         var players = level.getEntitiesOfClass(ServerPlayer.class, area, TacticalCombat::canEnroll);
-        var npcs = level.getEntitiesOfClass(DndNpcEntity.class, area, npc -> npc.isAlive()
+        var npcs = level.getEntitiesOfClass(DndNpcEntity.class, area, npc -> npc.isAlive() && !npc.preset().civilian()
                 && npc.deathSaves().state() != DeathSaveTracker.State.DEAD
                 && players.stream().anyMatch(player -> npc.attitudeFor(player.getUUID()) == NpcAttitude.HOSTILE));
         start(level, players, npcs, Set.of());
     }
 
     private static boolean canEnroll(ServerPlayer player) {
-        return player.isAlive() && !player.isSpectator() && !player.isPassenger() && !player.isSleeping()
+        return suspendedSession(player) == null && player.isAlive() && !player.isSpectator() && !player.isPassenger() && !player.isSleeping()
                 && !player.getAbilities().flying
                 && PlayerSheets.get(player).map(sheet -> sheet.deathSaves().state() != DeathSaveTracker.State.DEAD).orElse(true);
     }
@@ -234,9 +261,10 @@ public final class TacticalCombat {
 
     private static void start(ServerLevel level, List<ServerPlayer> players, List<DndNpcEntity> npcs, Set<UUID> surprised) {
         if (ACTIVE.containsKey(level)) throw new IllegalStateException("This dimension already has a tactical encounter");
-        if (players.isEmpty() || npcs.isEmpty()) throw new IllegalStateException("An encounter needs players and hostile NPCs");
+        var opponents = npcs.stream().filter(npc -> !npc.preset().civilian()).toList();
+        if (players.isEmpty() || opponents.isEmpty()) throw new IllegalStateException("An encounter needs players and hostile NPCs");
         List<LivingEntity> entities = new ArrayList<>(players);
-        entities.addAll(npcs);
+        entities.addAll(opponents);
         if (entities.size() > Protocol.MAX_COMBATANTS) throw new IllegalArgumentException("Too many combatants");
         if (entities.stream().map(LivingEntity::blockPosition).distinct().count() != entities.size()) {
             throw new IllegalStateException("Move creatures into separate grid cells first");
@@ -262,6 +290,7 @@ public final class TacticalCombat {
 
     public static boolean environmentDamage(LivingEntity target, DamageType5e damage, int amount) {
         Session session = session(target);
+        if (session != null && session.paused()) return false;
         if (session != null) {
             session.manager.damage(target.getUUID(), target.getUUID(), Map.of(damage, amount), false);
             return true;
@@ -312,7 +341,7 @@ public final class TacticalCombat {
             }
             return Optional.empty();
         }
-        if (source.getEntity() != null || CinematicFreeze.active(level)) return Optional.of(false);
+        if (source.getEntity() != null || session.paused()) return Optional.of(false);
         long gameTime = level.getGameTime();
         long last = session.lastHazard.getOrDefault(target.getUUID(), Long.MIN_VALUE / 2);
         if (gameTime - last < 10) return Optional.of(false);
@@ -392,6 +421,7 @@ public final class TacticalCombat {
         private UUID pathActor;
         private Cell pendingStep;
         private final Map<UUID, LivingEntity> entities = new LinkedHashMap<>();
+        private final Set<UUID> suspendedPlayers = new java.util.HashSet<>();
         private final Map<UUID, Long> lastHazard = new LinkedHashMap<>();
         private final Map<UUID, Cell> lastCells = new LinkedHashMap<>();
         private final CombatEncounterState state;
@@ -453,13 +483,19 @@ public final class TacticalCombat {
         }
 
         private void tick() {
-            entities.values().stream().filter(entity -> entity.level() != level || !entity.isAlive() || entity.isRemoved()
-                    || entity instanceof ServerPlayer player && player.isSpectator()).toList().forEach(this::remove);
+            for (var entity : List.copyOf(entities.values())) {
+                if (entity instanceof ServerPlayer player && !player.isAlive() && player.connection != null) {
+                    suspendPlayer(player);
+                } else if (entity.level() != level || !entity.isAlive() || entity.isRemoved()
+                        || entity instanceof ServerPlayer player && player.isSpectator()) {
+                    remove(entity.getUUID());
+                }
+            }
             if (manager.snapshot().current().isEmpty() || state.initiativeOrder().stream().map(CombatantEntry::team).distinct().count() < 2) {
                 stop(level);
                 return;
             }
-            if (CinematicFreeze.active(level)) return;
+            if (paused()) return;
             if (level.getGameTime() % 20 == 0) detectHidden();
             long time = now();
             manager.tick(time);
@@ -507,13 +543,40 @@ public final class TacticalCombat {
             }
         }
 
-        private void remove(LivingEntity entity) {
-            state.initiativeOrder().stream().filter(entry -> entry.id().equals(entity.getUUID())).findFirst()
-                    .filter(entry -> entity.isAlive()).ifPresent(entry -> syncHealth(entry, entity));
-            manager.removeCombatant(entity.getUUID());
-            entities.remove(entity.getUUID());
-            lastHazard.remove(entity.getUUID());
-            lastCells.remove(entity.getUUID());
+        private boolean contains(UUID id) { return entities.containsKey(id) || suspendedPlayers.contains(id); }
+
+        private boolean paused() { return !suspendedPlayers.isEmpty() || CinematicFreeze.active(level); }
+
+        private void suspendPlayer(ServerPlayer player) {
+            UUID id = player.getUUID();
+            if (player.isAlive()) syncHealth(state.require(id), player);
+            suspendedPlayers.add(id);
+            entities.remove(id);
+            lastCells.remove(id);
+            if (id.equals(pathActor)) {
+                path.clear();
+                pendingStep = null;
+                pathActor = null;
+            }
+        }
+
+        private void replacePlayer(ServerPlayer player) {
+            UUID id = player.getUUID();
+            entities.put(id, player);
+            suspendedPlayers.remove(id);
+            lastCells.remove(id);
+            syncHealth(state.require(id), player);
+            if (!paused()) synchronize();
+        }
+
+        private void remove(UUID id) {
+            var entity = entities.get(id);
+            if (entity != null && entity.isAlive()) syncHealth(state.require(id), entity);
+            manager.removeCombatant(id);
+            entities.remove(id);
+            suspendedPlayers.remove(id);
+            lastHazard.remove(id);
+            lastCells.remove(id);
             if (entity instanceof DndNpcEntity npc) npc.restoreAiAfterCombat();
         }
 
@@ -537,16 +600,20 @@ public final class TacticalCombat {
 
         private Protocol.Combat networkView(UUID actorId) {
             var snapshot = manager.snapshot();
-            var actor = state.require(actorId);
-            var current = snapshot.current().orElseThrow();
-            var view = actor.view();
+            var current = snapshot.current().orElse(null);
             var initiative = state.initiativeOrder().stream().map(entry -> new Protocol.Creature(entry.id(),
                     ModPackets.trim(entry.name(), 80), entry.team(), entry.initiative(), entry.cell(), entry.hitPoints().current(),
                     entry.hitPoints().maximum(), entry.hitPoints().temporary(), entry.armorClass(), entry.stats().meleeReachFeet(),
                     entry.deathSaves().state(), entry.view().conditions())).toList();
+            var actor = actorId == null ? null : state.initiativeOrder().stream().filter(entry -> entry.id().equals(actorId)).findFirst().orElse(null);
+            if (actor == null) {
+                return new Protocol.Combat(id, null, current, snapshot.round(), true, initiative, Set.of(), 0,
+                        Map.of(), Map.of(), List.of(), List.of(), Protocol.Slots.EMPTY, null);
+            }
+            var view = actor.view();
             Map<Cell, Integer> reachable = new LinkedHashMap<>();
             Map<Cell, List<UUID>> threats = new LinkedHashMap<>();
-            if (current.equals(actorId) && !CinematicFreeze.active(level) && manager.reactionWindow().isEmpty() && path.isEmpty()) {
+            if (actorId.equals(current) && !paused() && manager.reactionWindow().isEmpty() && path.isEmpty()) {
                 manager.reachable(actorId).entrySet().stream().limit(Protocol.MAX_CELLS).forEach(entry -> {
                     reachable.put(entry.getKey(), entry.getValue());
                     if (actor.cell().distanceFeet(entry.getKey()) == 5) {
@@ -555,15 +622,15 @@ public final class TacticalCombat {
                     }
                 });
             }
-            var reaction = manager.reactionWindow().filter(window -> !window.answered().contains(actorId)).map(window ->
+            var reaction = manager.reactionWindow().filter(window -> !paused() && !window.answered().contains(actorId)).map(window ->
                     new Protocol.Reaction(window.id(), (int) Math.max(0, window.deadlineMillis() - now()),
                             window.offers().stream().filter(offer -> offer.reactor().equals(actorId))
-                                    .map(offer -> offer.kind()).distinct().toList())).filter(r -> !r.choices().isEmpty()).orElse(null);
+                                    .map(offer -> offer.kind()).distinct().toList(), window.totalDurationMs())).filter(r -> !r.choices().isEmpty()).orElse(null);
             var slots = new Protocol.Slots(java.util.stream.IntStream.rangeClosed(1, 9).mapToObj(level -> actor.slotsAvailable(Pool.REGULAR, level)).toList(),
                     java.util.stream.IntStream.rangeClosed(1, 9).mapToObj(level -> actor.slotsAvailable(Pool.PACT, level)).toList());
-            var resources = current.equals(actorId) && manager.reactionWindow().isPresent()
+            var resources = paused() || actorId.equals(current) && manager.reactionWindow().isPresent()
                     ? Set.<Resource>of() : view.resources().available();
-            return new Protocol.Combat(id, actorId, current, snapshot.round(), CinematicFreeze.active(level) || manager.reactionWindow().isPresent(), initiative, resources, view.resources().movementRemainingFeet(),
+            return new Protocol.Combat(id, actorId, current, snapshot.round(), paused() || manager.reactionWindow().isPresent(), initiative, resources, view.resources().movementRemainingFeet(),
                     reachable, threats, actor.stats().attacks().stream().map(attack -> ModPackets.trim(attack.name(), 80)).toList(),
                     actor.stats().spells().keySet().stream().sorted().toList(), slots, reaction);
         }
@@ -584,7 +651,8 @@ public final class TacticalCombat {
         private void synchronize() {
             for (CombatantEntry entry : state.initiativeOrder()) {
                 LivingEntity entity = entities.get(entry.id());
-                if (entity.level() != level || entity.isRemoved() || !entity.isAlive()) continue;
+                if (entity == null || entity.level() != level || entity.isRemoved() || !entity.isAlive()
+                        || entity instanceof ServerPlayer player && player.connection == null) continue;
                 Cell cell = entry.cell();
                 double x = cell.x() + .5;
                 double z = cell.z() + .5;
@@ -641,7 +709,7 @@ public final class TacticalCombat {
         private void restore() {
             for (CombatantEntry entry : state.initiativeOrder()) {
                 var entity = entities.get(entry.id());
-                if (entity.isRemoved()) continue;
+                if (entity == null || entity.isRemoved()) continue;
                 if (entity.isAlive()) syncHealth(entry, entity);
                 if (entity instanceof DndNpcEntity npc) {
                     if (entry.dead()) npc.discard();

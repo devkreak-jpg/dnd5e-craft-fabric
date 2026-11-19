@@ -29,7 +29,8 @@ public final class TacticalGridWorldRenderer {
 
     private static void render(WorldRenderContext context) {
         var client = Minecraft.getInstance();
-        if (client.level == null || client.options.hideGui || context.matrixStack() == null || context.consumers() == null) return;
+        if (client.player == null || client.level == null || client.options.hideGui
+                || context.matrixStack() == null || context.consumers() == null) return;
         var combat = ClientDndState.combat();
         var pings = ClientDndState.pings();
         var area = ClientActions.areaPreview();

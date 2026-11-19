@@ -9,6 +9,11 @@ public enum NpcAttitude {
         this.difficultyAdjustment = difficultyAdjustment;
     }
 
+    public static NpcAttitude fromIndex(int index) {
+        NpcAttitude[] attitudes = values();
+        return index >= 0 && index < attitudes.length ? attitudes[index] : INDIFFERENT;
+    }
+
     public int adjustDifficulty(int base) {
         if (base < 0 || base > 30) throw new IllegalArgumentException("Dialogue DC must be between 0 and 30");
         return Math.max(0, Math.min(30, base + difficultyAdjustment));

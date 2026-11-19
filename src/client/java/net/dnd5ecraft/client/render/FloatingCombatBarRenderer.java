@@ -1,6 +1,7 @@
 package net.dnd5ecraft.client.render;
 
 import net.dnd5ecraft.client.ClientDndState;
+import net.dnd5ecraft.network.CombatHudView;
 import net.dnd5ecraft.network.Protocol.Creature;
 import net.dnd5ecraft.rules.spells.AoEGeometry.Vec3;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
@@ -19,10 +20,8 @@ public final class FloatingCombatBarRenderer {
     private static void render(WorldRenderContext context) {
         var client = Minecraft.getInstance();
         var combat = ClientDndState.combat();
-        if (client.level == null || client.options.hideGui || combat == null
+        if (client.level == null || client.player == null || client.options.hideGui || combat == null
                 || context.matrixStack() == null || context.consumers() == null) return;
-        var self = combat.creature(combat.controlledActor());
-        if (self == null) return;
         var camera = context.camera().getPosition();
         for (var entity : client.level.entitiesForRendering()) {
             Creature info = combat.creature(entity.getUUID());
@@ -36,9 +35,9 @@ public final class FloatingCombatBarRenderer {
                     net.minecraft.util.Mth.lerp(delta, entity.zOld, entity.getZ()) - camera.z);
             matrices.mulPose(context.camera().rotation());
             matrices.scale(.025f, -.025f, .025f);
-            int accent = info.id().equals(combat.activeActor()) ? GOLD : info.team() == self.team() ? EMERALD : CRIMSON;
+            int accent = info.id().equals(combat.activeActor()) ? GOLD : CombatHudView.allied(combat, info) ? EMERALD : CRIMSON;
             var buffer = context.consumers().getBuffer(RenderType.debugQuads());
-            double fill = 42 * Math.max(0, info.hp()) / Math.max(1.0, info.maxHp());
+            double fill = 42 * CombatHudView.healthFraction(info.hp(), info.maxHp());
             rectangle(matrices, buffer, -21, -10, 21, -5, 0xD80A0B0E);
             if (fill > 0) rectangle(matrices, buffer, -21, -9, -21 + fill, -6, accent);
             WorldDrawing.label(matrices, context.consumers(), text("render.health_armor", info.hp(), info.armor()), 1, TEXT, 0xDB0A0B0E);

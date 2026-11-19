@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import net.dnd5ecraft.rules.ability.AbilityCheckEngine.RollMode;
 import net.dnd5ecraft.rules.ability.Skill;
+import net.minecraft.nbt.Tag;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -50,5 +51,24 @@ class DialogueTreeTest {
         DialogueTree decoded = DialogueNbt.read(DialogueNbt.write(tree));
         assertEquals(tree.start(), decoded.start());
         assertEquals(tree.nodes(), decoded.nodes());
+    }
+
+    @Test
+    void olderSavedDialogueLocalizesStockLinesAndPreservesPlayerEdits() {
+        var saved = DialogueNbt.write(DialogueTree.defaultTree());
+        saved.remove("LocalizedDefaults");
+        var meeting = saved.getList("Nodes", Tag.TAG_COMPOUND).getCompound(0);
+        meeting.putString("Text", "The stranger sizes you up before speaking.");
+        var parley = meeting.getList("Choices", Tag.TAG_COMPOUND).getCompound(0);
+        parley.putString("Label", "Ask for a peaceful word");
+        parley.putInt("DC", 16);
+        saved.getList("Nodes", Tag.TAG_COMPOUND).getCompound(1).putString("Text", "A player-written reply.");
+
+        var upgraded = DialogueNbt.readStored(saved);
+        assertEquals(DialogueTree.BUILTIN_PREFIX + "stranger.greeting", upgraded.node("meeting").text());
+        var first = upgraded.node("meeting").choices().get(0);
+        assertEquals(DialogueTree.BUILTIN_PREFIX + "stranger.parley", first.label());
+        assertEquals(16, first.check().orElseThrow().difficulty());
+        assertEquals("A player-written reply.", upgraded.node("welcome").text());
     }
 }

@@ -6,6 +6,10 @@ import java.util.Set;
 import java.util.UUID;
 import net.dnd5ecraft.combat.EncounterDifficultyCalculator;
 import net.dnd5ecraft.combat.GridMovementTracker.Cell;
+import net.dnd5ecraft.dialogue.DialogueNode;
+import net.dnd5ecraft.dialogue.DialogueTree;
+import net.dnd5ecraft.dialogue.NpcAttitude;
+import net.dnd5ecraft.rules.ability.AbilityCheckEngine.RollMode;
 import net.dnd5ecraft.entity.BestiaryPreset.Feature;
 import net.dnd5ecraft.entity.TriggerZoneSpec.Mode;
 import net.dnd5ecraft.rules.equipment.DamageType5e;
@@ -40,7 +44,7 @@ class TriggerAndBestiaryTest {
     @Test
     void allFifteenPresetsProvideDistinctIdsAndPlayableStats() {
         assertEquals(15, BestiaryRegistry5e.presets().size());
-        for (BestiaryPreset preset : BestiaryPreset.values()) {
+        for (BestiaryPreset preset : BestiaryRegistry5e.ambushers()) {
             assertEquals(preset, BestiaryPreset.fromId(preset.id()));
             assertTrue(EncounterDifficultyCalculator.xp(preset.challenge()) > 0);
             assertTrue(preset.maxHp() > 0);
@@ -50,6 +54,45 @@ class TriggerAndBestiaryTest {
         assertTrue(BestiaryPreset.WOLF.features().contains(Feature.PACK_TACTICS));
         assertTrue(BestiaryPreset.IMP.features().contains(Feature.MAGIC_RESISTANCE));
         assertEquals(Set.of(DamageType5e.POISON), BestiaryPreset.SKELETON.defenses().immunities());
+    }
+
+    @Test
+    void civilianPresetsHaveZeroAttackDamageAndBranchingDialogue() {
+        assertEquals(NpcAttitude.INDIFFERENT, NpcAttitude.fromIndex(-1));
+        assertEquals(NpcAttitude.INDIFFERENT, NpcAttitude.fromIndex(99));
+        assertEquals(NpcAttitude.HOSTILE, NpcAttitude.fromIndex(NpcAttitude.HOSTILE.ordinal()));
+        assertEquals(List.of(BestiaryPreset.TAVERN_KEEPER, BestiaryPreset.MERCHANT, BestiaryPreset.TOWN_GUARD),
+                BestiaryRegistry5e.civilians());
+        for (BestiaryPreset preset : BestiaryRegistry5e.civilians()) {
+            assertSame(preset, BestiaryPreset.fromId(preset.id()));
+            assertTrue(preset.civilian());
+            assertTrue(preset.attacks().isEmpty());
+            assertEquals(0.0, preset.baseAttackDamage());
+            assertTrue(BestiaryRegistry5e.spawnable().contains(preset));
+            assertFalse(BestiaryRegistry5e.ambushers().contains(preset));
+            var dialogue = BestiaryRegistry5e.starterDialogue(preset);
+            var offer = dialogue.choose(dialogue.start(), "service", NpcAttitude.FRIENDLY, skill -> 0, RollMode.NORMAL, sides -> 1);
+            var rumor = dialogue.choose(dialogue.start(), "news", NpcAttitude.FRIENDLY, skill -> 0, RollMode.NORMAL, sides -> 1);
+            assertEquals("offer", offer.outcome().next().orElseThrow());
+            assertEquals("rumor", rumor.outcome().next().orElseThrow());
+            assertTrue(offer.check().isEmpty());
+            assertTrue(rumor.check().isEmpty());
+            assertNotEquals(dialogue.node("offer").text(), dialogue.node("rumor").text());
+        }
+    }
+
+    @Test
+    void changingPresetReplacesStockDialogueAndPreservesEditedBranches() {
+        var merchant = BestiaryPreset.MERCHANT;
+        var guard = BestiaryPreset.TOWN_GUARD;
+        var stock = BestiaryRegistry5e.starterDialogue(merchant);
+        var guardDialogue = BestiaryRegistry5e.dialogueAfterPresetChange(merchant, guard, stock);
+        assertEquals(BestiaryRegistry5e.starterDialogue(guard).nodes(), guardDialogue.nodes());
+
+        var edited = new DialogueTree(stock.start(), stock.nodes().stream()
+                .map(node -> node.id().equals("rumor") ? new DialogueNode(node.id(), "The town gates close at dusk.", node.choices()) : node)
+                .toList());
+        assertSame(edited, BestiaryRegistry5e.dialogueAfterPresetChange(merchant, guard, edited));
     }
 
     @Test
