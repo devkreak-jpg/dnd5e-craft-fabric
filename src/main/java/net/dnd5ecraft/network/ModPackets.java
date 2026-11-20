@@ -70,6 +70,7 @@ public final class ModPackets {
 
     private static final class Session {
         State state;
+        Protocol.OnlineView online;
         CharacterSheetData sheet;
         int sheetAc;
         boolean sentSheet;
@@ -82,6 +83,7 @@ public final class ModPackets {
 
         void invalidateSnapshot() {
             state = null;
+            online = null;
             sentSheet = false;
         }
     }
@@ -123,12 +125,20 @@ public final class ModPackets {
                 // The complete request must decode before any work is queued.
             }
         });
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+            var player = handler.player;
+            TacticalCombat.rejoin(player);
+            net.dnd5ecraft.server.OnlineParty.join(player);
+            for (var member : server.getPlayerList().getPlayers()) sync(member);
+        });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+            net.dnd5ecraft.server.OnlineParty.disconnect(handler.player);
             LIMITS.remove(handler);
             SESSIONS.remove(handler.player.getUUID());
             TabletopPackets.disconnect(handler.player);
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            net.dnd5ecraft.server.OnlineParty.clear(server);
             SESSIONS.clear();
             TabletopPackets.clear();
             LIMITS.clear();
@@ -146,6 +156,7 @@ public final class ModPackets {
         });
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             if (server.getTickCount() % 5 != 0) return;
+            net.dnd5ecraft.server.OnlineParty.refresh(server);
             var players = server.getPlayerList().getPlayers();
             for (ServerPlayer player : players) {
                 if (supports(player)) {
@@ -391,6 +402,16 @@ public final class ModPackets {
             case PILOT -> {
                 Cell destination = cell(buf);
                 yield player -> pilot(player, destination);
+            }
+            case HANDOUT_SEND -> {
+                String audience = buf.readUtf(16);
+                var card = OnlineCodec.handout(buf);
+                yield player -> net.dnd5ecraft.server.OnlineParty.handout(player, audience, card);
+            }
+            case READY_RESPONSE -> {
+                UUID id = buf.readUUID();
+                boolean ready = buf.readBoolean();
+                yield player -> net.dnd5ecraft.server.OnlineParty.readyResponse(player, id, ready);
             }
             case NPC_INSPECT -> {
                 UUID id = buf.readUUID();
@@ -775,7 +796,22 @@ public final class ModPackets {
         send(player, Update.JOURNAL, out -> {
             out.writeUtf(((net.dnd5ecraft.server.PlayerCharacter) player).dnd5e$journalNotes(), Protocol.JOURNAL_NOTES_LIMIT);
             writeList(out, List.copyOf(session(player).journal), FriendlyByteBuf::writeComponent);
+            writeList(out, ((net.dnd5ecraft.server.PlayerCharacter) player).dnd5e$handouts(), OnlineCodec::handout);
         });
+    }
+
+    public static void sendHandout(ServerPlayer player, Protocol.Handout handout) {
+        var character = (net.dnd5ecraft.server.PlayerCharacter) player;
+        var saved = new java.util.ArrayList<>(character.dnd5e$handouts());
+        saved.add(0, handout);
+        character.dnd5e$handouts(saved);
+        if (supports(player)) {
+            send(player, Update.HANDOUT, out -> OnlineCodec.handout(out, handout));
+            sendJournal(player);
+        } else {
+            player.sendSystemMessage(Component.literal(handout.title()).withStyle(net.minecraft.ChatFormatting.GOLD));
+            player.sendSystemMessage(Component.literal(handout.body()));
+        }
     }
 
     public static void banner(ServerPlayer player, Component title) {
@@ -844,6 +880,11 @@ public final class ModPackets {
             send(player, timed ? TIMED_UPDATE : UPDATE, Update.STATE, out -> state(out, selected, timed));
             session.state = selected;
             session.timed = timed;
+        }
+        var online = net.dnd5ecraft.server.OnlineParty.view(player, combat);
+        if (!online.equals(session.online)) {
+            send(player, Update.ONLINE_PARTY, out -> OnlineCodec.write(out, online));
+            session.online = online;
         }
         var currentSheet = PlayerSheets.get(player).orElse(null);
         int currentAc = currentSheet == null ? 0 : TacticalCombat.armorClass(player, currentSheet);

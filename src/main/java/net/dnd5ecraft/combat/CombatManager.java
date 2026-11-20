@@ -201,6 +201,26 @@ public final class CombatManager {
         encounter.end();
     }
 
+    public void connection(UUID actor, boolean offline, long time) {
+        var entry = encounter.find(actor).orElse(null);
+        if (entry == null || entry.offline == offline) return;
+        entry.offline = offline;
+        if (offline) {
+            reactionWindow().ifPresent(window -> answerReaction(window.id(), actor, Optional.empty(), time));
+            maneuvers.releaseEndedGrapples();
+        }
+    }
+
+    public boolean skipOfflineTurn(long time) {
+        tick(time);
+        var actor = encounter.currentEntry().filter(CombatantEntry::offline).orElse(null);
+        if (actor == null || reactionWindow().isPresent()) return false;
+        endTurn(actor.id(), time);
+        return true;
+    }
+
+    public List<net.dnd5ecraft.network.Protocol.SpellZone> activeZones() { return spells.activeZones(); }
+
     public void endTurn(UUID actor, long nowMillis) {
         requireIdle(nowMillis);
         CombatantEntry current = current(actor);
@@ -230,7 +250,7 @@ public final class CombatManager {
         List<CombatantEntry> order = encounter.initiativeOrder();
         for (int i = index; i < order.size(); i++) {
             CombatantEntry attacker = order.get(i);
-            if (attacker.team() == finished.team() || finished.hp.current() == 0
+            if (attacker.team() == finished.team() || finished.offline() || finished.hp.current() == 0
                     || !attacker.canAct() || !canHarm(attacker, finished)) continue;
             var state = attacker.bestiary().orElse(null);
             if (state == null || state.legendaryActions() == 0) continue;
@@ -471,6 +491,14 @@ public final class CombatManager {
         current.campaignDash = true;
     }
 
+    void aggressive(UUID actor, long nowMillis) {
+        requireIdle(nowMillis);
+        var entry = acting(actor);
+        if (entry.bestiary().filter(state -> state.has(Feature.AGGRESSIVE)).isEmpty()
+                || !entry.turn.spend(Resource.BONUS_ACTION)) throw new IllegalStateException("Aggressive is unavailable");
+        entry.turn.extraDash();
+    }
+
     public void disengage(UUID actor, boolean bonusAction, long nowMillis) {
         requireIdle(nowMillis);
         CombatantEntry current = acting(actor);
@@ -698,6 +726,7 @@ public final class CombatManager {
     void echoSwing(CombatantEntry actor) { world.echoSwing(actor); }
 
     CombatantEntry combatant(UUID id) { return encounter.require(id); }
+    CombatantEntry findCombatant(UUID id) { return encounter.find(id).orElse(null); }
     List<CombatantEntry> combatants() { return encounter.initiativeOrder(); }
 
     public Cover cover(CombatantEntry observer, CombatantEntry target) {
@@ -721,7 +750,7 @@ public final class CombatManager {
 
     boolean canSeeFrom(CombatantEntry observer, Cell from, CombatantEntry target) {
         if (observer == target) return true;
-        if (target.dead() || !target.conditionEffects().visiblyPresent(target.has(Effect.REVEALED))) return false;
+        if (target.offline() || target.dead() || !target.conditionEffects().visiblyPresent(target.has(Effect.REVEALED))) return false;
         if (target.stealth >= 0 && target.stealth > PassiveSenseTracker.score(observer.skillModifier(Skill.PERCEPTION), RollMode.NORMAL)) return false;
         return LightingVisionEvaluator.evaluate(world.lightAt(target.cell()), from.distanceFeet(target.cell()),
                 observer.stats().darkvisionFeet(), observer.stats().traits().contains(Trait.DEVILS_SIGHT) ? 120 : 0,
@@ -741,7 +770,7 @@ public final class CombatManager {
     }
 
     boolean canHarm(CombatantEntry actor, CombatantEntry target) {
-        return actor != target && !target.dead()
+        return actor != target && !actor.offline() && !target.offline() && !target.dead()
                 && actor.conditionEffects().canTargetWithHarmfulEffect(actor.originatingCondition(ConditionType.CHARMED, target.id()));
     }
 
@@ -924,9 +953,31 @@ public final class CombatManager {
         spells.endConcentration(caster);
     }
 
+    void drainMaximum(CombatantEntry target, int amount) {
+        var hp = target.hp;
+        int drain = Math.min(hp.maximum() - 1, Math.max(0, amount));
+        if (drain <= 0) return;
+        target.drainedMaximum += drain;
+        target.hp = new HitPoints(Math.min(hp.current(), hp.maximum() - drain), hp.maximum() - drain,
+                hp.temporary(), hp.arcaneWard(), hp.beast());
+    }
+
+    public void restoreDrainedMaximums() {
+        for (var entry : encounter.initiativeOrder()) {
+            if (entry.drainedMaximum == 0) continue;
+            var hp = entry.hp;
+            entry.hp = new HitPoints(hp.current(), hp.maximum() + entry.drainedMaximum,
+                    hp.temporary(), hp.arcaneWard(), hp.beast());
+            entry.drainedMaximum = 0;
+        }
+    }
+
     public void applyCondition(UUID actor, ConditionInstance condition) {
         CombatantEntry target = encounter.require(actor);
-        if (target.dead() || (condition.type() == ConditionType.POISONED
+        if (target.offline() || target.dead()
+                || target.stats().traits().contains(Trait.CONSTRUCT)
+                    && Set.of(ConditionType.POISONED, ConditionType.CHARMED, ConditionType.FRIGHTENED, ConditionType.PARALYZED).contains(condition.type())
+                || (condition.type() == ConditionType.POISONED
                 && !target.conditionEffects().canAcquirePoisonOrDisease())) return;
         target.conditions.add(condition);
         if (!target.canAct()) {
@@ -944,7 +995,7 @@ public final class CombatManager {
         HitPoints before = target.hp;
         DamagePipeline.Result result = DamagePipeline.apply(dodge ? halveDamage(damage) : damage, target.defenses(), before,
                 target.remaining(ClassFeature.RELENTLESS_ENDURANCE) > 0);
-        if (target.dead()) return DamagePipeline.apply(Map.of(), target.defenses(), before);
+        if (target.offline() || target.dead()) return DamagePipeline.apply(Map.of(), target.defenses(), before);
         target.hp = result.remaining();
         if (result.enduranceUsed()) target.spend(ClassFeature.RELENTLESS_ENDURANCE, 1);
         target.bestiary().ifPresent(state -> state.onDamage(result.adjustedDamage()));
@@ -1014,6 +1065,18 @@ public final class CombatManager {
         }
         BestiaryPreset.Breath breath = state.preset().breath();
         Vec3 from = attacker.cell().center();
+        if (state.preset() == BestiaryPreset.DEATH_KNIGHT) {
+            if (destination.minus(from).length() * 5 > breath.lengthFeet()
+                    || !CoverRaycaster.clearRay(eye(attacker), destination, world::blocksCover))
+                throw new IllegalArgumentException("Hellfire Orb needs a visible point in range");
+            var orb = new Template(AoEGeometry.SPHERE, 20).place(destination, null, attacker.bounds(), true);
+            attacker.turn.spend(Resource.ACTION);
+            state.spendBreath();
+            event(EventType.BESTIARY, attacker, attacker, "hellfire_orb", breath.saveDc());
+            world.zoneVisual("hellfire_orb", orb);
+            resolveBestiaryArea(attacker, orb, breath.saveDc(), breath.dice(), DamageType5e.FIRE, DamageType5e.NECROTIC);
+            return;
+        }
         Area area = new Template(AoEGeometry.CONE, breath.lengthFeet())
                 .place(from, destination.minus(from), attacker.bounds(), false);
         attacker.turn.spend(Resource.ACTION);
@@ -1041,16 +1104,24 @@ public final class CombatManager {
     }
 
     void resolveBestiaryArea(CombatantEntry attacker, Area area, int dc, Dice dice, DamageType5e type) {
+        resolveBestiaryArea(attacker, area, dc, dice, type, null);
+    }
+
+    private void resolveBestiaryArea(CombatantEntry attacker, Area area, int dc, Dice dice,
+            DamageType5e type, DamageType5e secondary) {
         var targets = AoETargetResolver.resolve(area, encounter.initiativeOrder(), target -> target.cell().center(),
                 (from, to) -> CoverRaycaster.clearRay(from, to, world::blocksCover));
         int rolled = dice.roll(false, roller);
+        int extra = secondary == null ? 0 : dice.roll(false, roller);
         for (CombatantEntry target : targets) {
-            if (target == attacker || target.dead()) continue;
+            if (target == attacker || target.offline() || target.dead()) continue;
             int coverBonus = CoverRaycaster.cover(area.origin(), target.bounds(), world::blocksCover).bonus();
             var flags = saveFlags(target, Ability.DEXTERITY, false, false, false);
             boolean saved = finishSave(target, Ability.DEXTERITY, dc, coverBonus, flags.automaticFailure(),
-                    flags.automaticFailure() ? 0 : d20(target, flags.mode()), rolled >= 15);
-            dealDamage(attacker, target, Map.of(type, saved ? rolled / 2 : rolled), false, false);
+                    flags.automaticFailure() ? 0 : d20(target, flags.mode()), rolled + extra >= 15);
+            int primary = saved ? rolled / 2 : rolled;
+            var damage = secondary == null ? Map.of(type, primary) : Map.of(type, primary, secondary, saved ? extra / 2 : extra);
+            dealDamage(attacker, target, damage, false, false);
         }
     }
 
@@ -1065,7 +1136,7 @@ public final class CombatManager {
     }
 
     void heal(CombatantEntry caster, CombatantEntry target, int amount) {
-        if (target.dead() || target.has(Effect.NO_HEALING)) return;
+        if (target.offline() || target.dead() || target.has(Effect.NO_HEALING)) return;
         int previous = target.hp.current();
         target.hp = target.hp.heal(amount);
         target.death = target.death.afterHealing(target.hp.current());

@@ -26,6 +26,7 @@ import org.lwjgl.glfw.GLFW;
 public final class ModKeybinds {
     public static KeyMapping PING;
     private static KeyMapping sheet, spellbook, roll, end, dm, console, dash, disengage, stand, interact, decline, cancel, attackProfile, wheel, hotkeys, fireCannon;
+    private static KeyMapping partyStrip, ready, needTime;
     private static boolean showHotkeys = true;
     private static final EnumMap<Kind, KeyMapping> REACTIONS = new EnumMap<>(Kind.class);
     private static CameraType previousCamera;
@@ -50,6 +51,9 @@ public final class ModKeybinds {
         attackProfile = key("attack_profile", GLFW.GLFW_KEY_H);
         cancel = key("cancel", GLFW.GLFW_KEY_Z);
         decline = key("decline", GLFW.GLFW_KEY_F10);
+        ready = key("ready", GLFW.GLFW_KEY_RIGHT_BRACKET);
+        needTime = key("need_time", GLFW.GLFW_KEY_LEFT_BRACKET);
+        partyStrip = key("party_strip", GLFW.GLFW_KEY_F4);
         for (Kind kind : Kind.values()) {
             int keyCode = switch (kind) {
                 case CUTTING_WORDS -> GLFW.GLFW_KEY_J;
@@ -92,6 +96,9 @@ public final class ModKeybinds {
                 }
             }
             if (client.screen != null) return;
+            if (ready.consumeClick()) net.dnd5ecraft.client.gui.hud.OnlinePartyHud.respond(true);
+            if (needTime.consumeClick()) net.dnd5ecraft.client.gui.hud.OnlinePartyHud.respond(false);
+            if (partyStrip.consumeClick()) net.dnd5ecraft.client.gui.hud.OnlinePartyHud.toggle();
             if (wheel.consumeClick() && wheel.isDown()) client.setScreen(new ActionWheelScreen());
             if (hotkeys.consumeClick()) showHotkeys = !showHotkeys;
             if (fireCannon.consumeClick()) {
@@ -151,6 +158,9 @@ public final class ModKeybinds {
         }
         return true;
     }
+
+    public static Component readyKey() { return ready.getTranslatedKeyMessage(); }
+    public static Component needTimeKey() { return needTime.getTranslatedKeyMessage(); }
 
     public static net.minecraft.network.chat.Component rollKey() { return roll.getTranslatedKeyMessage(); }
 

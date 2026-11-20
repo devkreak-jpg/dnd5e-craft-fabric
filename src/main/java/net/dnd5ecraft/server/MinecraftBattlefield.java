@@ -62,6 +62,8 @@ final class MinecraftBattlefield implements CombatManager.Battlefield {
         var origin = area.origin();
         var p = new net.minecraft.world.phys.Vec3(origin.x(), origin.y(), origin.z());
         if (id.equals("fog_cloud")) CampaignMagic.fogVisual(level, p);
+        if (id.equals("hellfire_orb")) CampaignMagic.visual(level, p, net.minecraft.core.particles.ParticleTypes.SOUL_FIRE_FLAME,
+                net.minecraft.sounds.SoundEvents.GENERIC_EXPLODE, 65);
         if (id.equals("grease")) CampaignMagic.visual(level, p, net.minecraft.core.particles.ParticleTypes.FALLING_HONEY, net.minecraft.sounds.SoundEvents.HONEY_BLOCK_SLIDE, 30);
     }
 

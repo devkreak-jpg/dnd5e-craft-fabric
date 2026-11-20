@@ -37,6 +37,7 @@ public final class PlayerSheets {
         ServerPlayerEvents.COPY_FROM.register((previous, current, alive) -> {
             NEXT_DEATH_SAVE.remove(previous);
             ((PlayerCharacter) current).dnd5e$journalNotes(((PlayerCharacter) previous).dnd5e$journalNotes());
+            ((PlayerCharacter) current).dnd5e$handouts(((PlayerCharacter) previous).dnd5e$handouts());
             ((PlayerCharacter) current).dnd5e$setCosmetics(((PlayerCharacter) previous).dnd5e$showsCosmetics());
             get(previous).ifPresent(sheet -> {
                 set(current, sheet);

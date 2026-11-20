@@ -167,7 +167,7 @@ public final class PacketCodec {
     private static Creature creature(FriendlyByteBuf buf) {
         return new Creature(buf.readUUID(), buf.readUtf(80), buf.readVarInt(), buf.readVarInt(), cell(buf),
                 buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(), buf.readVarInt(),
-                readEnum(buf, DeathSaveTracker.State.class), fromMask(ConditionType.class, buf.readVarInt()));
+                readEnum(buf, DeathSaveTracker.State.class), fromMask(ConditionType.class, buf.readVarInt()), buf.readBoolean());
     }
 
     private static void creature(FriendlyByteBuf buf, Creature value) {
@@ -183,6 +183,7 @@ public final class PacketCodec {
         buf.writeVarInt(value.reach());
         writeEnum(buf, value.life());
         buf.writeVarInt(mask(value.conditions()));
+        buf.writeBoolean(value.offline());
     }
 
     private static List<Integer> readSlots(FriendlyByteBuf buf) {

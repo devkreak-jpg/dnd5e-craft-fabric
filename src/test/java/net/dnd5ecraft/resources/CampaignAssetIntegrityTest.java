@@ -87,15 +87,18 @@ final class CampaignAssetIntegrityTest {
     void allNpcSkinsAreUniqueLayeredAndAcceptedByAppearanceValidation() throws Exception {
         net.minecraft.SharedConstants.tryDetectVersion();
         net.minecraft.server.Bootstrap.bootStrap();
-        assertEquals(34, NpcSkinCatalog.ALL.size());
-        var images = new java.util.HashSet<Integer>();
+        assertTrue(NpcSkinCatalog.ALL.size() >= 64);
+        var images = new java.util.HashSet<String>();
+        var sha256 = java.security.MessageDigest.getInstance("SHA-256");
         for (var skin : NpcSkinCatalog.ALL) {
             var path = skin.texture().getPath();
             var image = dimensions(path, 64, 64);
             assertEquals(skin.texture(), DndNpcEntity.validatedSkin(skin.texture().toString()));
-            assertTrue(images.add(java.util.Arrays.hashCode(image.getRGB(0, 0, 64, 64, null, 0, 64))), path);
+            var pixels = java.nio.ByteBuffer.allocate(64 * 64 * Integer.BYTES);
+            for (int pixel : image.getRGB(0, 0, 64, 64, null, 0, 64)) pixels.putInt(pixel);
+            assertTrue(images.add(java.util.HexFormat.of().formatHex(sha256.digest(pixels.array()))), path);
             assertTrue(java.util.Arrays.stream(image.getRGB(16, 36, 24, 12, null, 0, 24)).anyMatch(pixel -> pixel >>> 24 != 0), path);
-            assertEquals(0, image.getRGB(63, 0) >>> 24, path);
+            assertEquals(0, image.getRGB(63, 31) >>> 24, path);
         }
         assertNotNull(DndNpcEntity.validatedSkin("dnd-5e-craft:textures/entity/crowd/guards_0.png"));
         assertThrows(IllegalArgumentException.class, () -> DndNpcEntity.validatedSkin("foreign:textures/entity/skins/a.png"));

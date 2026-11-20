@@ -19,19 +19,23 @@ import net.dnd5ecraft.rules.spells.AoEGeometry.Vec3;
 
 public final class Protocol {
     static final UUID NO_ACTOR = new UUID(0, 0);
-    public static final int VERSION = 4;
+    public static final int VERSION = 5;
     public static final int MAX_REQUEST = 16_000;
     public static final int MAX_COMBATANTS = 64;
     public static final int MAX_CELLS = 4096;
     public static final int MAX_SPELL_TARGETS = 16;
     public static final int MAX_UPDATE = 180_000;
 
-    public enum Update { STATE, SHEET, ROLL, PING, DIALOGUE, DIALOGUE_END, NPC, ZONE, DRAFT_ROLL, NOTICE, DAMAGE, PARTY, CINEMATIC_BANNER, PASSIVE_DETECTION_GLINT, TABLETOP_READY, TABLETOP_RESULT, ROLL_PROMPT, PROMPT_END, DIALOGUE_ROLL, CONCENTRATION, SHORT_REST, DIRECTOR_SELECTION, JOURNAL, S2C_COMBAT_FLOAT_TEXT, S2C_TACTICAL_PING, S2C_SHORT_REST_FX, S2C_NATURAL, S2C_INSPECT }
+    public enum Update { STATE, SHEET, ROLL, PING, DIALOGUE, DIALOGUE_END, NPC, ZONE, DRAFT_ROLL, NOTICE, DAMAGE, PARTY, CINEMATIC_BANNER, PASSIVE_DETECTION_GLINT, TABLETOP_READY, TABLETOP_RESULT, ROLL_PROMPT, PROMPT_END, DIALOGUE_ROLL, CONCENTRATION, SHORT_REST, DIRECTOR_SELECTION, JOURNAL, S2C_COMBAT_FLOAT_TEXT, S2C_TACTICAL_PING, S2C_SHORT_REST_FX, S2C_NATURAL, S2C_INSPECT, ONLINE_PARTY, HANDOUT }
     public static final int JOURNAL_LIMIT = 25, JOURNAL_NOTES_LIMIT = 512;
     public enum AbilityMethod { POINT_BUY, STANDARD_ARRAY, ROLLED }
 
     public record Creature(UUID id, String name, int team, int initiative, Cell cell, int hp, int maxHp,
-                           int temporary, int armor, int reach, DeathSaveTracker.State life, Set<ConditionType> conditions) {
+                           int temporary, int armor, int reach, DeathSaveTracker.State life, Set<ConditionType> conditions, boolean offline) {
+        public Creature(UUID id, String name, int team, int initiative, Cell cell, int hp, int maxHp,
+                        int temporary, int armor, int reach, DeathSaveTracker.State life, Set<ConditionType> conditions) {
+            this(id, name, team, initiative, cell, hp, maxHp, temporary, armor, reach, life, conditions, false);
+        }
         public Creature { conditions = Set.copyOf(conditions); }
     }
     public record Slots(List<Integer> regular, List<Integer> pact) {
@@ -79,6 +83,20 @@ public final class Protocol {
         public TurnToken turn() { return new TurnToken(id, activeActor, round); }
         public Creature creature(UUID id) { return initiative.stream().filter(actor -> actor.id().equals(id)).findFirst().orElse(null); }
     }
+
+    public record SpellZone(String spell, net.dnd5ecraft.rules.spells.AoEGeometry.Area area) {}
+    public record OnlineMember(UUID id, String name, int hp, int maximum, int armor, boolean online,
+                               UUID echo, UUID cannon) {}
+    public record ReadyView(UUID id, String label, Map<UUID, net.dnd5ecraft.rules.campaign.PartyReadyCheck.Status> members,
+                            boolean complete) {
+        public ReadyView { members = Map.copyOf(members); }
+    }
+    public record OnlineView(List<OnlineMember> party, ReadyView ready, List<SpellZone> zones) {
+        public OnlineView { party = List.copyOf(party); zones = List.copyOf(zones); }
+    }
+    public record Handout(String title, String body) {}
+    public static final int HANDOUT_LIMIT = 8;
+    public static final int HANDOUT_TITLE_LIMIT = 96, HANDOUT_BODY_LIMIT = 1800;
 
     public record State(boolean operator, boolean dm, int darkvision, Combat combat) {}
     public record DialogueOption(String id, String label, Skill skill, int dc) {}

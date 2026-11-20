@@ -392,7 +392,7 @@ class CombatManagerTest {
         CombatantEntry target = creature(2, 0, 10, cell(1, 0), 100, 12, Set.of(Trait.HUMANOID), 0);
         var melee = encounter(FIXED_DICE, monster, target);
         melee.start();
-        assertEquals(MonsterAiDirector.Action.ATTACK, MonsterAiDirector.plan(melee, monster.id()).action());
+        assertEquals(MonsterAiDirector.Action.ATTACK, MonsterAiDirector.plan(melee, monster.id()).orElseThrow().action());
         MonsterAiDirector.execute(melee, monster.id(), 0);
         assertEquals(90, target.hitPoints().current());
 
@@ -401,11 +401,11 @@ class CombatManagerTest {
         var closing = encounter(FIXED_DICE, mover, distant);
         closing.start();
         for (int i = 0; i < 6; i++) {
-            assertEquals(MonsterAiDirector.Action.MOVE, MonsterAiDirector.plan(closing, mover.id()).action());
+            assertEquals(MonsterAiDirector.Action.MOVE, MonsterAiDirector.plan(closing, mover.id()).orElseThrow().action());
             MonsterAiDirector.execute(closing, mover.id(), i);
         }
         assertEquals(70, mover.cell().distanceFeet(distant.cell()));
-        assertEquals(MonsterAiDirector.Action.DASH, MonsterAiDirector.plan(closing, mover.id()).action());
+        assertEquals(MonsterAiDirector.Action.DASH, MonsterAiDirector.plan(closing, mover.id()).orElseThrow().action());
         MonsterAiDirector.execute(closing, mover.id(), 7);
         assertEquals(1, mover.view().resources().dashes());
     }

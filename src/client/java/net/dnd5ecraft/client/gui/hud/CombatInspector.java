@@ -36,7 +36,7 @@ public final class CombatInspector {
         var actor = combat.creature(combat.controlledActor());
         if (actor == null) return false;
         var entry = combat.creature(target);
-        return entry == null ? eligibleOutsider : entry.team() != actor.team();
+        return entry == null ? eligibleOutsider : !entry.offline() && entry.team() != actor.team();
     }
 
     static void render(GuiGraphics g, Minecraft client, Combat combat) {

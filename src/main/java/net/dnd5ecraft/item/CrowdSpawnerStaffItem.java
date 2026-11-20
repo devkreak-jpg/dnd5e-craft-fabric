@@ -60,9 +60,11 @@ public final class CrowdSpawnerStaffItem extends Item {
         var crowd = theme(staff);
         var profile = crowd.random(new java.util.Random(operator.getRandom().nextLong()));
         var skins = switch (crowd) {
-            case TAVERN -> java.util.List.of(BARD_MINSTREL, PEASANT_MALE, PEASANT_FEMALE, MYSTERIOUS_STRANGER);
-            case TOWNSFOLK -> java.util.List.of(BLACKSMITH_TORIN, MERCHANT_ELARA, NOBLE_LORD, NOBLE_LADY, WIZARD_SCHOLAR);
-            case GUARDS -> java.util.List.of(TOWN_GUARD_CAPTAIN, TOWN_GUARD_SPEARMAN);
+            case TAVERN -> java.util.List.of(TAVERN_KEEPER_BORIS, BARD_MINSTREL, PEASANT_MALE, PEASANT_FEMALE,
+                    MYSTERIOUS_STRANGER, PIRATE_CORSAIR, COURT_JESTER, STREET_URCHIN);
+            case TOWNSFOLK -> java.util.List.of(BLACKSMITH_TORIN, MERCHANT_ELARA, NOBLE_LORD, NOBLE_LADY, WIZARD_SCHOLAR,
+                    ALCHEMIST_GOGGLES, PLAGUE_DOCTOR, EASTERN_SPICE_MERCHANT, VILLAGE_ELDER, CLERIC_PRIESTESS, DESERT_MONK);
+            case GUARDS -> java.util.List.of(TOWN_GUARD_CAPTAIN, TOWN_GUARD_SPEARMAN, DWARF_MINER, ELVEN_RANGER, ROYAL_PALADIN);
             case BANDITS -> java.util.List.of(BANDIT_THUG, BANDIT_CROSSBOWMAN, BANDIT_CUTTHROAT);
             case CULTISTS -> java.util.List.of(CULTIST_ACOLYTE, CULTIST_NECROMANCER);
         };

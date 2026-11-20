@@ -7,7 +7,6 @@ import java.util.Optional;
 import java.util.UUID;
 import net.dnd5ecraft.combat.CombatantEntry.Attack;
 import net.dnd5ecraft.combat.GridMovementTracker.Cell;
-import net.dnd5ecraft.combat.GridMovementTracker.Path;
 import net.dnd5ecraft.combat.TurnEconomy.Resource;
 import net.dnd5ecraft.entity.BestiaryPreset.Feature;
 import net.dnd5ecraft.entity.NpcCombatRole;
@@ -17,7 +16,7 @@ import net.dnd5ecraft.rules.spells.SpellRegistry5e;
 import net.dnd5ecraft.rules.spells.SpellSlotTable.Pool;
 
 public final class MonsterAiDirector {
-    public enum Action { ATTACK, MOVE, DASH, DISENGAGE, SHOVE, CAST, END_TURN }
+    public enum Action { ATTACK, MOVE, DASH, AGGRESSIVE, DISENGAGE, SHOVE, CAST, END_TURN }
     public record Decision(Action action, UUID target, int attackIndex, Cell destination, String spell, int slot) {
         public Decision(Action action, UUID target, int attackIndex, Cell destination) {
             this(action, target, attackIndex, destination, null, 0);
@@ -29,14 +28,17 @@ public final class MonsterAiDirector {
 
     private MonsterAiDirector() {}
 
-    public static Decision plan(CombatManager combat, UUID actor) {
-        CombatantEntry monster = combat.combatant(actor);
-        if (!combat.snapshot().current().equals(Optional.of(actor))) {
-            throw new IllegalStateException("AI can only plan the active creature's turn");
-        }
+    public static Optional<Decision> plan(CombatManager combat, UUID actor) {
+        if (actor == null) return Optional.empty();
+        var monster = combat.findCombatant(actor);
+        if (monster == null || monster.offline() || !combat.snapshot().current().equals(Optional.of(actor))) return Optional.empty();
+        return Optional.of(plan(combat, monster));
+    }
+
+    private static Decision plan(CombatManager combat, CombatantEntry monster) {
         if (!monster.canAct() && monster.speedFeet() == 0) return endTurn(monster);
         List<CombatantEntry> enemies = combat.combatants().stream()
-                .filter(target -> target.team() != monster.team() && target.hitPoints().current() > 0 && !target.dead())
+                .filter(target -> target.team() != monster.team() && !target.offline() && target.hitPoints().current() > 0 && !target.dead())
                 .toList();
         if (enemies.isEmpty()) return endTurn(monster);
         var role = monster.bestiary().map(state -> state.preset().combatRole()).orElse(NpcCombatRole.MELEE_BRUTE);
@@ -64,6 +66,10 @@ public final class MonsterAiDirector {
             return new Decision(shove ? Action.SHOVE : Action.ATTACK, target.id(), candidate.index, monster.cell());
         }
         if (step.isPresent()) return new Decision(Action.MOVE, null, -1, step.orElseThrow());
+        if (monster.canAct() && monster.speedFeet() > 0 && monster.turn.canSpend(Resource.BONUS_ACTION)
+                && monster.bestiary().filter(state -> state.has(Feature.AGGRESSIVE)).isPresent()
+                && nextStep(combat, monster, enemies, movement + monster.speedFeet(), role, false).isPresent())
+            return new Decision(Action.AGGRESSIVE, null, -1, monster.cell());
         if (actionAvailable && monster.speedFeet() > 0
                 && nextStep(combat, monster, enemies, movement + monster.speedFeet(), role, false).isPresent()) {
             return new Decision(Action.DASH, null, -1, monster.cell());
@@ -74,7 +80,8 @@ public final class MonsterAiDirector {
     public static Optional<ReactionWindowManager.Window> execute(CombatManager combat, UUID actor, long nowMillis) {
         combat.tick(nowMillis);
         if (combat.reactionWindow().isPresent()) return combat.reactionWindow();
-        Decision decision = plan(combat, actor);
+        Decision decision = plan(combat, actor).orElse(null);
+        if (decision == null) return Optional.empty();
         switch (decision.action) {
             case ATTACK -> { return combat.attack(actor, decision.target, decision.attackIndex, nowMillis); }
             case MOVE -> { return combat.move(actor, decision.destination, nowMillis); }
@@ -83,11 +90,16 @@ public final class MonsterAiDirector {
                 var targets = decision.spell.equals("magic_missile")
                         ? java.util.Collections.nCopies(spell.targetsAt(decision.slot, combat.combatant(actor).stats().level()), decision.target)
                         : List.of(decision.target);
-                return combat.cast(actor, new CombatManager.CastRequest(decision.spell, decision.slot, targets), nowMillis);
+                var request = decision.spell.equals("fireball")
+                        ? new CombatManager.CastRequest(decision.spell, decision.slot, Pool.REGULAR, List.of(),
+                                Optional.of(decision.destination.center()), Optional.empty())
+                        : new CombatManager.CastRequest(decision.spell, decision.slot, targets);
+                return combat.cast(actor, request, nowMillis);
             }
             case DISENGAGE -> combat.disengage(actor, false, nowMillis);
             case SHOVE -> combat.maneuver(actor, CombatManager.Maneuver.SHOVE, decision.target, 0, null, nowMillis);
             case DASH -> combat.dash(actor, false, nowMillis);
+            case AGGRESSIVE -> combat.aggressive(actor, nowMillis);
             case END_TURN -> combat.endTurn(actor, nowMillis);
         }
         return Optional.empty();
@@ -118,6 +130,7 @@ public final class MonsterAiDirector {
                 double score = Math.min(Math.max(0, mean), enemy.hitPoints().current()) * chance
                         + (mean >= enemy.hitPoints().current() ? chance : 0);
                 if (role == NpcCombatRole.MELEE_BRUTE) score += (pack ? 25 : 0) + (!enemy.stats().spells().isEmpty() ? 15 : 0);
+                if (attack.name().equals("Life Drain") && monster.attacksRemaining == 0) score += 2;
                 if (role == NpcCombatRole.MINI_BOSS) score += combat.concentration(enemy.id()).isPresent() ? 20 : 0;
                 if (best == null || score > best.score) best = new Candidate(enemy, index, score);
             }
@@ -141,6 +154,11 @@ public final class MonsterAiDirector {
         for (CombatantEntry target : ordered) {
             boolean holding = combat.concentration(caster.id()).isPresent();
             boolean concentrating = combat.concentration(target.id()).isPresent();
+            if (legalSpell(combat, caster, target, "fireball", 3) && caster.cell().distanceFeet(target.cell()) > 20
+                    && ordered.stream().filter(enemy -> enemy.cell().distanceFeet(target.cell()) <= 20).count() >= 2
+                    && combat.combatants().stream().noneMatch(friend -> friend.team() == caster.team()
+                        && !friend.dead() && friend.cell().distanceFeet(target.cell()) <= 20))
+                return Optional.of(new Decision(Action.CAST, target.id(), -1, target.cell(), "fireball", 3));
             if (!holding && concentrating && target.stats().traits().contains(CombatantEntry.Trait.HUMANOID)
                     && legalSpell(combat, caster, target, "hold_person", 2))
                 return Optional.of(cast(caster, target, "hold_person", 2));
@@ -148,6 +166,8 @@ public final class MonsterAiDirector {
                 return Optional.of(cast(caster, target, "magic_missile", 1));
             if (!holding && legalSpell(combat, caster, target, "bane", 1))
                 return Optional.of(cast(caster, target, "bane", 1));
+            if (caster.cell().distanceFeet(target.cell()) > 5 && legalSpell(combat, caster, target, "ray_of_frost", 0))
+                return Optional.of(cast(caster, target, "ray_of_frost", 0));
             if (legalSpell(combat, caster, target, "fire_bolt", 0))
                 return Optional.of(cast(caster, target, "fire_bolt", 0));
         }
@@ -181,7 +201,7 @@ public final class MonsterAiDirector {
             return new Position(cell, entry.getValue(), score(combat, monster, enemies, cell, role, actionAvailable));
         }).filter(position -> position.score > start).min(rank)
                 .flatMap(position -> GridMovementTracker.path(monster.cell(), position.cell, budget, terrain, crawl))
-                .map(Path::cells).map(path -> path.get(1));
+                .flatMap(path -> firstStep(path.cells()));
     }
 
     private static double score(CombatManager combat, CombatantEntry monster, List<CombatantEntry> enemies, Cell cell,
@@ -201,6 +221,10 @@ public final class MonsterAiDirector {
                     -cell.distanceFeet(enemy.cell()) + (packOpportunity(combat, monster, enemy, cell) ? 25 : 0)
                     + (role == NpcCombatRole.MELEE_BRUTE && !enemy.stats().spells().isEmpty() ? 15 : 0)).max().orElseThrow();
         };
+    }
+
+    static Optional<Cell> firstStep(List<Cell> cells) {
+        return cells.size() >= 2 ? Optional.of(cells.get(1)) : Optional.empty();
     }
 
     public static int rangedTileScore(CoverRaycaster.Cover cover, boolean adjacent, boolean hasShot, int distanceFeet) {

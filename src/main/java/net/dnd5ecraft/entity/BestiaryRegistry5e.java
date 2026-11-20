@@ -12,8 +12,12 @@ import net.dnd5ecraft.rules.ability.Skill;
 import static net.dnd5ecraft.entity.BestiaryPreset.*;
 
 public final class BestiaryRegistry5e {
-    private static final List<BestiaryPreset> PRESETS = List.of(GOBLIN, KOBOLD, SKELETON, ZOMBIE, WOLF, DIRE_WOLF,
-            ORC, BANDIT_CAPTAIN, BUGBEAR, GHOUL, OGRE, OWLBEAR, TROLL, VAMPIRE_SPAWN, YOUNG_RED_DRAGON);
+    private static final List<BestiaryPreset> PRESETS = List.of(
+            BANDIT, BANDIT_CROSSBOWMAN, CULTIST, KOBOLD, KOBOLD_SHAMAN, GOBLIN, GOBLIN_ARCHER, SKELETON,
+            SKELETON_ARCHER, ZOMBIE, DROW_WARRIOR, HOBGOBLIN_LEGIONARY, GNOLL_HUNTER, LIZARDFOLK, SAHUAGIN, ORC, WOLF,
+            GOBLIN_BOSS, BUGBEAR, GHOUL, SPECTER, ANIMATED_ARMOR, DIRE_WOLF, BANDIT_CUTTHROAT, CULT_FANATIC,
+            GARGOYLE, OGRE, MINOTAUR_SKELETON, MUMMY, WIGHT, OWLBEAR, BEARDED_DEVIL, CAPTAIN_MORGAN, DRAGONBORN_KNIGHT,
+            TROLL, VAMPIRE_SPAWN, HILL_GIANT, ORC_WARLORD, ASSASSIN, STONE_GOLEM, YOUNG_RED_DRAGON, DEATH_KNIGHT, LICH_ARCHMAGE);
 
     private static final List<BestiaryPreset> CIVILIANS = List.of(TAVERN_KEEPER, MERCHANT, TOWN_GUARD);
     private static final List<BestiaryPreset> SPAWNABLE = List.of(BestiaryPreset.values());
@@ -44,7 +48,38 @@ public final class BestiaryRegistry5e {
             case CULTIST_ACOLYTE -> NpcSkinCatalog.CULTIST_ACOLYTE;
             case TROLL -> NpcSkinCatalog.TROLL_REGENERATOR;
             case VAMPIRE, VAMPIRE_SPAWN -> NpcSkinCatalog.VAMPIRE_SPAWN;
-            case ADULT_RED_DRAGON, YOUNG_RED_DRAGON -> NpcSkinCatalog.DRAGONBORN_KNIGHT_BOSS;
+            case ADULT_RED_DRAGON -> NpcSkinCatalog.DRAGONBORN_KNIGHT_BOSS;
+            case YOUNG_RED_DRAGON -> NpcSkinCatalog.YOUNG_RED_DRAGON;
+            case OWLBEAR -> NpcSkinCatalog.OWLBEAR;
+            case WOLF -> NpcSkinCatalog.WOLF;
+            case DIRE_WOLF -> NpcSkinCatalog.DIRE_WOLF;
+            case BANDIT -> NpcSkinCatalog.BANDIT_THUG;
+            case BANDIT_CROSSBOWMAN -> NpcSkinCatalog.BANDIT_CROSSBOWMAN;
+            case CULTIST -> NpcSkinCatalog.CULTIST_ACOLYTE;
+            case KOBOLD_SHAMAN -> NpcSkinCatalog.KOBOLD_SHAMAN;
+            case SKELETON_ARCHER -> NpcSkinCatalog.SKELETON_ARCHER;
+            case DROW_WARRIOR -> NpcSkinCatalog.DROW_WARRIOR;
+            case HOBGOBLIN_LEGIONARY -> NpcSkinCatalog.HOBGOBLIN_LEGIONARY;
+            case GNOLL_HUNTER -> NpcSkinCatalog.GNOLL_HUNTER;
+            case LIZARDFOLK -> NpcSkinCatalog.LIZARDFOLK_SHAMAN;
+            case SAHUAGIN -> NpcSkinCatalog.SAHUAGIN_RAIDER;
+            case GOBLIN_BOSS -> NpcSkinCatalog.GOBLIN_BOSS;
+            case SPECTER -> NpcSkinCatalog.SPECTER_WRAITH;
+            case ANIMATED_ARMOR -> NpcSkinCatalog.ANIMATED_ARMOR;
+            case BANDIT_CUTTHROAT -> NpcSkinCatalog.BANDIT_CUTTHROAT;
+            case CULT_FANATIC -> NpcSkinCatalog.CULT_FANATIC;
+            case GARGOYLE -> NpcSkinCatalog.STONE_GARGOYLE;
+            case MINOTAUR_SKELETON -> NpcSkinCatalog.MINOTAUR_SKELETON;
+            case MUMMY -> NpcSkinCatalog.MUMMY_GUARDIAN;
+            case WIGHT -> NpcSkinCatalog.WIGHT_CAPTAIN;
+            case BEARDED_DEVIL -> NpcSkinCatalog.BEARDED_DEVIL;
+            case DRAGONBORN_KNIGHT -> NpcSkinCatalog.DRAGONBORN_KNIGHT_BOSS;
+            case HILL_GIANT -> NpcSkinCatalog.HILL_GIANT;
+            case ORC_WARLORD -> NpcSkinCatalog.ORC_WARLORD;
+            case ASSASSIN -> NpcSkinCatalog.ASSASSIN_SHADOW;
+            case STONE_GOLEM -> NpcSkinCatalog.STONE_GOLEM;
+            case DEATH_KNIGHT -> NpcSkinCatalog.DEATH_KNIGHT_BOSS;
+            case LICH_ARCHMAGE -> NpcSkinCatalog.LICH_ARCHMAGE;
             case TAVERN_KEEPER -> NpcSkinCatalog.TAVERN_KEEPER_BORIS;
             case MERCHANT -> NpcSkinCatalog.MERCHANT_ELARA;
             case TOWN_GUARD -> NpcSkinCatalog.TOWN_GUARD_SPEARMAN;

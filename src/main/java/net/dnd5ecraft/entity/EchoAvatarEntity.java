@@ -40,7 +40,12 @@ public final class EchoAvatarEntity extends CampaignCompanion {
     @Override public void tick() {
         if (!level().isClientSide && ownerId().isPresent()) {
             var player = owner();
-            if (player == null || !player.isAlive() || player.level() != level()) {
+            if (player == null) {
+                super.tick();
+                setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+                return;
+            }
+            if (!player.isAlive() || player.level() != level()) {
                 dissolve();
                 return;
             }

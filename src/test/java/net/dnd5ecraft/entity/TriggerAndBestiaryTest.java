@@ -42,18 +42,33 @@ class TriggerAndBestiaryTest {
     }
 
     @Test
-    void allFifteenPresetsProvideDistinctIdsAndPlayableStats() {
-        assertEquals(15, BestiaryRegistry5e.presets().size());
+    void allPresetsProvideDistinctIdsAndPlayableStats() {
+        assertTrue(BestiaryRegistry5e.presets().size() >= 40);
         for (BestiaryPreset preset : BestiaryRegistry5e.ambushers()) {
             assertEquals(preset, BestiaryPreset.fromId(preset.id()));
             assertTrue(EncounterDifficultyCalculator.xp(preset.challenge()) > 0);
             assertTrue(preset.maxHp() > 0);
             assertEquals(6, preset.combatStats().abilityScores().size());
-            assertTrue(preset.combatStats().attacks().stream().anyMatch(attack -> attack.melee()));
+            assertFalse(preset.combatStats().attacks().isEmpty(), preset.id());
         }
         assertTrue(BestiaryPreset.WOLF.features().contains(Feature.PACK_TACTICS));
         assertTrue(BestiaryPreset.IMP.features().contains(Feature.MAGIC_RESISTANCE));
         assertEquals(Set.of(DamageType5e.POISON), BestiaryPreset.SKELETON.defenses().immunities());
+    }
+
+    @Test
+    void grandBestiaryHasDistinctSkinsAndValidPlayableTemplates() {
+        var skins = new java.util.HashSet<NpcSkinCatalog>();
+        for (var preset : BestiaryRegistry5e.presets()) {
+            assertTrue(skins.add(BestiaryRegistry5e.defaultSkin(preset).orElseThrow()), preset.id());
+            assertNotNull(preset.combatRole(), preset.id());
+            assertTrue(preset.armor() > 0 && preset.maxHp() > 0 && preset.speedFeet() > 0, preset.id());
+            assertTrue(preset.scale() >= .65f && preset.scale() <= 2.2f, preset.id());
+            int xp = EncounterDifficultyCalculator.xp(preset.challenge());
+            assertTrue(xp >= 25 && xp <= 8400, preset.id());
+            assertTrue(preset.attacks().stream().anyMatch(attack -> !attack.damage().isEmpty()), preset.id());
+        }
+        assertEquals(24L, NpcSkinCatalog.ALL.stream().filter(skin -> skin.category() == NpcSkinCatalog.Category.TOWN).count());
     }
 
     @Test

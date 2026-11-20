@@ -83,13 +83,15 @@ public final class TacticalCombat {
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             UUID player = handler.player.getUUID();
             ACTIVE.values().stream().filter(session -> session.level.getServer() == server && session.contains(player))
-                    .toList().forEach(session -> session.remove(player));
+                    .toList().forEach(session -> session.disconnect(handler.player));
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             var levels = ACTIVE.keySet().stream().filter(level -> level.getServer() == server).toList();
             levels.forEach(TacticalCombat::stop);
         });
-        PlayerBlockBreakEvents.BEFORE.register((world, player, pos, state, blockEntity) -> !blocksVanillaInteraction(player));
+        PlayerBlockBreakEvents.BEFORE.register((world, player, pos, state, blockEntity) ->
+                !blocksVanillaInteraction(player) && (!(state.getBlock() instanceof net.dnd5ecraft.entity.TriggerZoneBlock)
+                        || player.hasPermissions(2) || player.isCreative()));
         UseBlockCallback.EVENT.register((player, world, hand, hit) ->
                 blocksVanillaInteraction(player) ? InteractionResult.FAIL : InteractionResult.PASS);
         UseEntityCallback.EVENT.register((player, world, hand, entity, hit) ->
@@ -186,6 +188,26 @@ public final class TacticalCombat {
     private static Session suspendedSession(ServerPlayer player) {
         return ACTIVE.values().stream().filter(session -> session.level.getServer() == player.getServer()
                 && session.suspendedPlayers.contains(player.getUUID())).findFirst().orElse(null);
+    }
+
+    public static void rejoin(ServerPlayer player) {
+        var session = ACTIVE.get(player.serverLevel());
+        if (session != null && session.suspendedPlayers.contains(player.getUUID())) session.replacePlayer(player);
+    }
+
+    public static void skipOfflineTurn(ServerPlayer operator) {
+        if (!operator.hasPermissions(2)) throw new IllegalStateException("Operator permissions are required");
+        var session = ACTIVE.get(operator.serverLevel());
+        if (session == null || session.paused() || !session.manager.skipOfflineTurn(now()))
+            throw new IllegalStateException("There is no offline turn to skip");
+        session.synchronize();
+        session.publish();
+    }
+
+    public static List<Protocol.SpellZone> networkZones(ServerPlayer player) {
+        var session = controlledSession(player);
+        if (session == null && player.hasPermissions(2) && DmMode.active(player)) session = ACTIVE.get(player.serverLevel());
+        return session == null ? List.of() : session.manager.activeZones();
     }
 
     public static Map<UUID, String> networkConcentration(ServerPlayer player) {
@@ -634,6 +656,7 @@ public final class TacticalCombat {
         private long deathSaveUntil;
         private final Map<UUID, LivingEntity> entities = new LinkedHashMap<>();
         private final Set<UUID> suspendedPlayers = new java.util.HashSet<>();
+        private final Set<UUID> disconnected = new java.util.HashSet<>();
         private final Map<UUID, Long> lastHazard = new LinkedHashMap<>();
         private final Map<UUID, Cell> lastCells = new LinkedHashMap<>();
         private final CombatEncounterState state;
@@ -653,7 +676,8 @@ public final class TacticalCombat {
                 var stats = npc.preset().combatStats();
                 if (!npc.preset().civilian() && npc.preset() != BestiaryPreset.CAPTAIN_MORGAN
                         && npc.preset() != BestiaryPreset.GOBLIN_ARCHER
-                        && PlayerWeaponProfiles.stats(npc.getMainHandItem()).isPresent()) {
+                        && PlayerWeaponProfiles.stats(npc.getMainHandItem()).isPresent()
+                        && npc.preset().equipment().filter(weapon -> npc.getMainHandItem().is(ModItems.weapon(weapon))).isEmpty()) {
                     var profile = PlayerWeaponProfiles.npc(npc.getMainHandItem(), stats);
                     stats = new CombatantEntry.Stats(stats.speedFeet(), stats.armorClass(), stats.armored(), stats.darkvisionFeet(),
                             stats.level(), stats.abilityScores(), stats.savingThrows(), stats.classes(), stats.spells(),
@@ -741,9 +765,16 @@ public final class TacticalCombat {
             var window = manager.reactionWindow();
             if (window.isPresent()) {
                 for (var offer : window.get().offers()) {
-                    if (entities.get(offer.reactor()) instanceof DndNpcEntity && offer.kind() == Kind.OPPORTUNITY_ATTACK) {
-                        manager.answerReaction(window.get().id(), offer.reactor(),
-                                Optional.of(new CombatManager.Reaction(offer.kind())), time);
+                    if (entities.get(offer.reactor()) instanceof DndNpcEntity) {
+                        int slot = switch (offer.kind()) {
+                            case OPPORTUNITY_ATTACK -> 0;
+                            case SHIELD -> 1;
+                            case COUNTERSPELL -> 3;
+                            default -> -1;
+                        };
+                        if (slot >= 0) manager.answerReaction(window.get().id(), offer.reactor(),
+                                Optional.of(manager.commandReaction(offer.reactor(),
+                                        new CombatManager.Reaction(offer.kind(), slot, Pool.REGULAR))), time);
                     }
                 }
             } else if ((!path.isEmpty() || pendingStep != null) && level.getGameTime() % 2 == 0) {
@@ -754,6 +785,11 @@ public final class TacticalCombat {
                 boolean survivingNpc = state.initiativeOrder().stream().anyMatch(entry -> entry.team() == 1 && !entry.dead());
                 if (!survivingPlayer || !survivingNpc) {
                     stop(level);
+                    return;
+                }
+                if (current.offline()) {
+                    synchronize();
+                    publish();
                     return;
                 }
                 if (!current.canAct()) manager.endTurn(current.id(), time);
@@ -785,7 +821,16 @@ public final class TacticalCombat {
 
         private boolean contains(UUID id) { return entities.containsKey(id) || suspendedPlayers.contains(id); }
 
-        private boolean paused() { return !suspendedPlayers.isEmpty() || CinematicFreeze.active(level); }
+        private boolean paused() {
+            return suspendedPlayers.stream().anyMatch(id -> !disconnected.contains(id)) || CinematicFreeze.active(level);
+        }
+
+        private void disconnect(ServerPlayer player) {
+            UUID id = player.getUUID();
+            if (entities.get(id) == player) suspendPlayer(player);
+            disconnected.add(id);
+            manager.connection(id, true, now());
+        }
 
         private void suspendPlayer(ServerPlayer player) {
             UUID id = player.getUUID();
@@ -804,6 +849,8 @@ public final class TacticalCombat {
             UUID id = player.getUUID();
             entities.put(id, player);
             suspendedPlayers.remove(id);
+            disconnected.remove(id);
+            manager.connection(id, false, now());
             lastCells.remove(id);
             syncHealth(state.require(id), player);
             if (!paused()) synchronize();
@@ -815,6 +862,7 @@ public final class TacticalCombat {
             manager.removeCombatant(id);
             entities.remove(id);
             suspendedPlayers.remove(id);
+            disconnected.remove(id);
             lastHazard.remove(id);
             lastCells.remove(id);
             if (entity instanceof DndNpcEntity npc) npc.restoreAiAfterCombat();
@@ -844,10 +892,10 @@ public final class TacticalCombat {
             var initiative = state.initiativeOrder().stream().map(entry -> new Protocol.Creature(entry.id(),
                     ModPackets.trim(entry.name(), 80), entry.team(), entry.initiative(), entry.cell(), entry.hitPoints().current(),
                     entry.hitPoints().maximum(), entry.hitPoints().temporary(), entry.armorClass(), entry.stats().meleeReachFeet(),
-                    entry.deathSaves().state(), entry.view().conditions())).toList();
+                    entry.deathSaves().state(), entry.view().conditions(), entry.offline())).toList();
             var actor = actorId == null ? null : state.initiativeOrder().stream().filter(entry -> entry.id().equals(actorId)).findFirst().orElse(null);
             if (actor == null) {
-                return new Protocol.Combat(id, null, current, snapshot.round(), true, initiative, Set.of(), 0,
+                return new Protocol.Combat(id, null, current, snapshot.round(), paused() || manager.reactionWindow().isPresent(), initiative, Set.of(), 0,
                         Map.of(), Map.of(), List.of(), List.of(), Protocol.Slots.EMPTY, null);
             }
             var view = actor.view();
@@ -878,7 +926,7 @@ public final class TacticalCombat {
         private void act(DndNpcEntity npc, CombatantEntry actor, long time) {
             if (npc.bestiary().canUseBreath() && actor.view().resources().available().contains(Resource.ACTION)) {
                 var target = state.initiativeOrder().stream().filter(entry -> !entry.dead() && entry.team() != actor.team()
-                        && actor.cell().distanceFeet(entry.cell()) <= npc.preset().breath().lengthFeet()
+                        && !entry.offline() && actor.cell().distanceFeet(entry.cell()) <= npc.preset().breath().lengthFeet()
                         && manager.canSee(actor, entry) && !manager.cover(actor, entry).blocksTargeting())
                         .min(java.util.Comparator.<CombatantEntry, Boolean>comparing(entry -> manager.concentration(entry.id()).isEmpty())
                                 .thenComparingInt(entry -> entry.hitPoints().current()));
@@ -1040,9 +1088,19 @@ public final class TacticalCombat {
         }
 
         private void restore() {
+            manager.restoreDrainedMaximums();
             for (CombatantEntry entry : state.initiativeOrder()) {
                 var entity = entities.get(entry.id());
-                if (entity == null || entity.isRemoved()) continue;
+                if (entity == null) {
+                    if (disconnected.contains(entry.id())) {
+                        var storage = net.dnd5ecraft.rules.character.PlayerSheetStorage.get(level.getServer());
+                        storage.find(entry.id()).ifPresent(sheet -> storage.put(entry.id(),
+                                sheet.withCombatState(entry.hitPoints(), entry.activeConditions(), entry.deathSaves())
+                                        .withResources(entry.characterResources())));
+                    }
+                    continue;
+                }
+                if (entity.isRemoved()) continue;
                 if (entity.isAlive()) syncHealth(entry, entity);
                 if (entity instanceof ServerPlayer player) ((PlayerCharacter) player).dnd5e$campaignFlags(0);
                 if (entity instanceof DndNpcEntity npc) {

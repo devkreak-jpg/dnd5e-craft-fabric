@@ -34,6 +34,15 @@ public abstract class PlayerCharacterMixin implements PlayerCharacter {
             SynchedEntityData.defineId(Player.class, EntityDataSerializers.INT);
     @Unique private long dnd5e$disguiseExpiry;
     @Unique private String dnd5e$journalNotes = "";
+    @Unique private java.util.List<net.dnd5ecraft.network.Protocol.Handout> dnd5e$handouts = java.util.List.of();
+
+    @Override @Unique
+    public java.util.List<net.dnd5ecraft.network.Protocol.Handout> dnd5e$handouts() { return dnd5e$handouts; }
+
+    @Override @Unique
+    public void dnd5e$handouts(java.util.List<net.dnd5ecraft.network.Protocol.Handout> entries) {
+        dnd5e$handouts = entries.stream().limit(net.dnd5ecraft.network.Protocol.HANDOUT_LIMIT).toList();
+    }
     @Unique private CharacterSheetData dnd5e$character;
 
     @Inject(method = "getDimensions", at = @At("RETURN"), cancellable = true)
@@ -143,6 +152,14 @@ public abstract class PlayerCharacterMixin implements PlayerCharacter {
         tag.putLong("DndDisguiseExpiry", dnd5e$disguiseExpiresAt());
         tag.putInt("DndCampaignFlags", dnd5e$campaignFlags());
         tag.putString("DndJournalNotes", dnd5e$journalNotes());
+        var handouts = new net.minecraft.nbt.ListTag();
+        for (var handout : dnd5e$handouts) {
+            var entry = new CompoundTag();
+            entry.putString("Title", handout.title());
+            entry.putString("Body", handout.body());
+            handouts.add(entry);
+        }
+        tag.put("DndHandouts", handouts);
         if (dnd5e$character != null) tag.put("DndCharacter", dnd5e$character.toNbt());
     }
 
@@ -155,6 +172,11 @@ public abstract class PlayerCharacterMixin implements PlayerCharacter {
         dnd5e$disguiseExpiresAt(Math.max(0, tag.getLong("DndDisguiseExpiry")));
         dnd5e$campaignFlags(tag.getInt("DndCampaignFlags") & 0xF);
         dnd5e$journalNotes(tag.getString("DndJournalNotes"));
+        var saved = tag.getList("DndHandouts", Tag.TAG_COMPOUND);
+        dnd5e$handouts(java.util.stream.IntStream.range(0, Math.min(saved.size(), net.dnd5ecraft.network.Protocol.HANDOUT_LIMIT))
+                .mapToObj(saved::getCompound).map(entry -> new net.dnd5ecraft.network.Protocol.Handout(
+                    net.dnd5ecraft.network.ModPackets.trim(entry.getString("Title"), net.dnd5ecraft.network.Protocol.HANDOUT_TITLE_LIMIT),
+                    net.dnd5ecraft.network.ModPackets.trim(entry.getString("Body"), net.dnd5ecraft.network.Protocol.HANDOUT_BODY_LIMIT))).toList());
         if (!tag.contains("DndCharacter", Tag.TAG_COMPOUND)) return;
         try {
             dnd5e$setSheet(CharacterSheetData.fromNbt(tag.getCompound("DndCharacter")));

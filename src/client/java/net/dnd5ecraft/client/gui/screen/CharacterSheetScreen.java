@@ -407,8 +407,14 @@ public final class CharacterSheetScreen extends DndScreen {
 
     private void journalControls() {
         int x = left + 12;
-        journalCount = ClientDndState.journal().size();
+        journalCount = ClientDndState.journal().size() + ClientDndState.handouts().size();
         pages(journalCount, journalRows());
+        var handouts = ClientDndState.handouts();
+        for (int i = page * journalRows(); i < Math.min(handouts.size(), (page + 1) * journalRows()); i++) {
+            var card = handouts.get(i);
+            pill(text("online.journal_card", card.title()), x, bodyTop() + 23 + (i % journalRows()) * 13,
+                    innerWidth(), 12, false, () -> minecraft.setScreen(new DmHandoutScreen(this, card)));
+        }
         journalInput = edit("journal.notes", journalDraft == null ? java.util.Objects.toString(ClientDndState.journalNotes(), "") : journalDraft,
                 x, bodyTop(), innerWidth() - 68, net.dnd5ecraft.network.Protocol.JOURNAL_NOTES_LIMIT);
         journalInput.setHint(text("journal.notes"));
@@ -425,16 +431,17 @@ public final class CharacterSheetScreen extends DndScreen {
     private void journalContent(GuiGraphics g) {
         var entries = ClientDndState.journal();
         int y = bodyTop() + 23;
-        if (entries.isEmpty()) clipped(g, font, text("journal.empty"), left + 12, y, innerWidth(), MUTED);
-        for (int i = page * journalRows(); i < Math.min(entries.size(), (page + 1) * journalRows()); i++, y += 13) {
-            clipped(g, font, entries.get(i), left + 12, y, innerWidth(), TEXT);
+        int cards = ClientDndState.handouts().size();
+        if (entries.isEmpty() && cards == 0) clipped(g, font, text("journal.empty"), left + 12, y, innerWidth(), MUTED);
+        for (int i = page * journalRows(); i < Math.min(cards + entries.size(), (page + 1) * journalRows()); i++, y += 13) {
+            if (i >= cards) clipped(g, font, entries.get(i - cards), left + 12, y, innerWidth(), TEXT);
         }
     }
 
     @Override protected void tickInWorld() {
         if (tab == Tab.JOURNAL) {
             if (++journalRefresh % 30 == 0) ClientPacketHandlers.send(Action.JOURNAL);
-            if (journalCount != ClientDndState.journal().size()) rebuild();
+            if (journalCount != ClientDndState.journal().size() + ClientDndState.handouts().size()) rebuild();
             else if (journalDraft == null && ClientDndState.journalNotes() != null && journalInput != null
                     && !journalInput.getValue().equals(ClientDndState.journalNotes())) {
                 journalInput.setValue(ClientDndState.journalNotes());

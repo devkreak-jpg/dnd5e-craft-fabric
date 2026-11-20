@@ -52,6 +52,15 @@ public final class ClientCampaign {
     public static <T extends CampaignCompanion> T companion(Class<T> kind) {
         var client = Minecraft.getInstance();
         if (client.player == null || client.level == null) return null;
+        var links = ClientDndState.online().party().stream()
+                .filter(member -> member.id().equals(client.player.getUUID())).findFirst().orElse(null);
+        if (links != null) {
+            UUID linked = kind == net.dnd5ecraft.entity.EchoAvatarEntity.class ? links.echo() : links.cannon();
+            if (linked != null) for (var entity : client.level.entitiesForRendering()) {
+                if (kind.isInstance(entity) && entity.isAlive() && entity.getUUID().equals(linked))
+                    return kind.cast(entity);
+            }
+        }
         return client.level.getEntitiesOfClass(kind, client.player.getBoundingBox().inflate(64),
                 companion -> companion.isAlive() && companion.ownerId().filter(client.player.getUUID()::equals).isPresent())
                 .stream().findFirst().orElse(null);

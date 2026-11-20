@@ -95,7 +95,7 @@ public final class DndNpcEntity extends PathfinderMob {
     @Override public void aiStep() {
         super.aiStep();
         if (level().isClientSide) return;
-        if (preset() == BestiaryPreset.CAPTAIN_MORGAN) {
+        if (preset().features().contains(BestiaryPreset.Feature.LEGENDARY)) {
             long day = Math.floorDiv(level().getDayTime(), 24_000L);
             if (lastLegendaryDay == Long.MIN_VALUE) lastLegendaryDay = day;
             else if (day > lastLegendaryDay) {
@@ -227,6 +227,11 @@ public final class DndNpcEntity extends PathfinderMob {
         applyPreset(preset);
         setDialogue(BestiaryRegistry5e.starterDialogue(preset));
         bestiary = new BestiaryTurnState(preset);
+        preset.equipment().ifPresent(weapon -> {
+            setItemSlot(net.minecraft.world.entity.EquipmentSlot.MAINHAND,
+                    net.dnd5ecraft.item.ModItems.weapon(weapon).getDefaultInstance());
+            setDropChance(net.minecraft.world.entity.EquipmentSlot.MAINHAND, 0);
+        });
         lastLegendaryDay = Long.MIN_VALUE;
         death = DeathSaveTracker.CONSCIOUS;
         syncCombatHealth(new HitPoints(preset.maxHp(), preset.maxHp(), 0, 0), DeathSaveTracker.CONSCIOUS);
@@ -292,6 +297,14 @@ public final class DndNpcEntity extends PathfinderMob {
         entityData.set(TACTICAL_HP, health.current());
         entityData.set(TEMP_HP, health.temporary());
         setHealth(Math.max(1, health.current()));
+    }
+
+    @Override
+    public boolean hurt(net.minecraft.world.damagesource.DamageSource source, float amount) {
+        if (source.getEntity() instanceof ServerPlayer player && !player.hasPermissions(2) && !player.isCreative()
+                && preset().civilian() && attitudeFor(player.getUUID()) != NpcAttitude.HOSTILE
+                && !TacticalCombat.isLocked(this) && !TacticalCombat.isLocked(player)) return false;
+        return super.hurt(source, amount);
     }
 
     @Override

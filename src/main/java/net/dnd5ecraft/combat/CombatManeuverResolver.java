@@ -409,16 +409,37 @@ final class CombatManeuverResolver {
                     rolls.add(new DamageRoll(DamageType5e.RADIANT, DamagePipeline.divineSmiteDice(smiteSlot, holy), 0));
                 }
                 Map<DamageType5e, Integer> damage = DamagePipeline.rollDamage(rolls, outcome == AttackOutcome.CRITICAL, roller);
-                manager.dealDamage(attacker, defender, reduceDamage(damage, reduction), outcome == AttackOutcome.CRITICAL, dodge);
+                var result = manager.dealDamage(attacker, defender, reduceDamage(damage, reduction),
+                        outcome == AttackOutcome.CRITICAL, dodge);
                 if (opportunity && attacker.feat(FeatType.SENTINEL)) defender.speedLockedTurn = defender.turns;
-                if (!defender.dead()) bestiaryRider(attacker, defender, attack);
+                if (!defender.dead()) bestiaryRider(attacker, defender, attack, result.hitPointsLost());
             }
         }, after);
     }
 
-    private void bestiaryRider(CombatantEntry attacker, CombatantEntry target, Attack attack) {
+    private void bestiaryRider(CombatantEntry attacker, CombatantEntry target, Attack attack, int damage) {
         var preset = attacker.bestiary().map(state -> state.preset()).orElse(null);
         if (preset == null) return;
+        if (preset.features().contains(Feature.LIFE_DRAIN) && attack.name().equals("Life Drain") && damage > 0
+                && !manager.save(target, Ability.CONSTITUTION, preset == BestiaryPreset.SPECTER ? 10 : 13, 0, false, true))
+            manager.drainMaximum(target, damage);
+        if (preset.features().contains(Feature.MUMMY_ROT)
+                && !manager.save(target, Ability.CONSTITUTION, 12, 0, false, true)) {
+            target.effects.add(new TimedEffect(Effect.NO_HEALING, attacker.id(), 0, target.id(), Long.MAX_VALUE, true, 0, null));
+            manager.drainMaximum(target, new Dice(3, 6).roll(false, roller));
+        }
+        if (preset.features().contains(Feature.ASSASSIN_POISON)) {
+            int poison = new Dice(7, 6).roll(false, roller);
+            if (manager.save(target, Ability.CONSTITUTION, 15, 0, false, false)) poison /= 2;
+            manager.dealDamage(attacker, target, Map.of(DamageType5e.POISON, poison), false, false);
+        }
+        if (preset.features().contains(Feature.LICH_TOUCH) && !target.stats().traits().contains(Trait.CONSTRUCT)
+                && !target.has(Effect.GHOUL_PARALYSIS) && !manager.save(target, Ability.CONSTITUTION, 18, 0, false, true)) {
+            target.effects.add(new TimedEffect(Effect.GHOUL_PARALYSIS, attacker.id(), 0, target.id(), target.turns + 10,
+                    true, 18, null));
+            manager.spells().endConcentration(target.id());
+            releaseEndedGrapples();
+        }
         if ((preset == BestiaryPreset.WOLF || preset == BestiaryPreset.DIRE_WOLF)
                 && !manager.save(target, Ability.STRENGTH, preset == BestiaryPreset.WOLF ? 11 : 13, 0, false, false)) {
             manager.applyCondition(target.id(), new ConditionInstance(ConditionType.PRONE, Optional.of(attacker.id()), ConditionInstance.INDEFINITE));
@@ -477,14 +498,20 @@ final class CombatManeuverResolver {
 
     private List<DamageRoll> withSneakAttack(CombatantEntry attacker, CombatantEntry defender, Attack attack, RollMode mode) {
         int rogue = attacker.stats().classes().getOrDefault(ClassType.ROGUE, 0);
-        if (rogue == 0 || (!attack.finesse() && attack.melee()) || attacker.lastSneakAttack == manager.turnSequence()
-                || mode == RollMode.DISADVANTAGE) return attack.damage();
+        var preset = attacker.bestiary().map(state -> state.preset()).orElse(null);
+        boolean martial = preset != null && preset.features().contains(Feature.MARTIAL_ADVANTAGE);
+        boolean npcSneak = preset != null && preset.features().contains(Feature.SNEAK_STRIKE);
+        if (attacker.lastSneakAttack == manager.turnSequence()
+                || !martial && mode == RollMode.DISADVANTAGE
+                || !martial && !npcSneak && (rogue == 0 || !attack.finesse() && attack.melee())) return attack.damage();
         boolean distracted = encounter.initiativeOrder().stream().anyMatch(other -> other != attacker
-                && other.team() != defender.team() && other.canAct() && other.cell().distanceFeet(defender.cell()) <= 5);
-        if (mode != RollMode.ADVANTAGE && !distracted) return attack.damage();
+                && other.team() == attacker.team() && other.canAct() && other.cell().distanceFeet(defender.cell()) <= 5);
+        if (!distracted && (martial || mode != RollMode.ADVANTAGE)) return attack.damage();
         attacker.lastSneakAttack = manager.turnSequence();
         List<DamageRoll> rolls = new ArrayList<>(attack.damage());
-        rolls.add(new DamageRoll(rolls.get(0).type(), DamagePipeline.sneakAttackDice(rogue), 0));
+        Dice dice = martial ? new Dice(2, 6) : npcSneak ? new Dice(preset == BestiaryPreset.ASSASSIN ? 4 : 2, 6)
+                : DamagePipeline.sneakAttackDice(rogue);
+        rolls.add(new DamageRoll(rolls.get(0).type(), dice, 0));
         return rolls;
     }
 

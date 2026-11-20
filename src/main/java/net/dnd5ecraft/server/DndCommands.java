@@ -49,6 +49,20 @@ public final class DndCommands {
 
     static LiteralArgumentBuilder<CommandSourceStack> commandTree() {
         return literal("dnd")
+                .then(literal("em").then(argument("action", StringArgumentType.greedyString()).executes(context ->
+                        run(context, player -> OnlineParty.emote(player, StringArgumentType.getString(context, "action"))))))
+                .then(literal("pay").then(argument("recipient", EntityArgument.player())
+                        .then(argument("amount", com.mojang.brigadier.arguments.LongArgumentType.longArg(1))
+                                .then(argument("denomination", StringArgumentType.word()).suggests((context, suggestions) ->
+                                        net.minecraft.commands.SharedSuggestionProvider.suggest(List.of("cp", "sp", "ep", "gp", "pp"), suggestions))
+                                        .executes(context -> run(context, player -> OnlineParty.pay(player,
+                                                EntityArgument.getPlayer(context, "recipient"),
+                                                com.mojang.brigadier.arguments.LongArgumentType.getLong(context, "amount"),
+                                                StringArgumentType.getString(context, "denomination"))))))))
+                .then(literal("ready").then(argument("id", net.minecraft.commands.arguments.UuidArgument.uuid())
+                        .then(argument("ready", BoolArgumentType.bool()).executes(context -> run(context, player ->
+                                OnlineParty.readyResponse(player, net.minecraft.commands.arguments.UuidArgument.getUuid(context, "id"),
+                                        BoolArgumentType.getBool(context, "ready")))))))
                 .then(literal("choose").then(argument("choice", StringArgumentType.word()).executes(context -> run(context, player -> {
                     if (!DialogueSessions.choose(player, StringArgumentType.getString(context, "choice"))) {
                         throw new IllegalStateException("No active dialogue choice");
@@ -198,7 +212,20 @@ public final class DndCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> dmCommands() {
         return literal("dm").requires(source -> source.hasPermission(2))
-                .then(literal("build_demo_map").executes(context -> run(context, DemoMapBuilder::build)))
+                .then(literal("build_demo_map").executes(context -> run(context, DemoMapBuilder::build))
+                        .then(literal("here").executes(context -> run(context, DemoMapBuilder::buildHere))))
+                .then(literal("skip_turn").executes(context -> run(context, TacticalCombat::skipOfflineTurn)))
+                .then(literal("readycheck").executes(context -> run(context, player -> OnlineParty.readyCheck(player, "")))
+                        .then(argument("label", StringArgumentType.greedyString()).executes(context ->
+                                run(context, player -> OnlineParty.readyCheck(player, StringArgumentType.getString(context, "label"))))))
+                .then(literal("secret").then(argument("recipient", EntityArgument.player())
+                        .then(argument("message", StringArgumentType.greedyString()).executes(context -> run(context, player ->
+                                OnlineParty.secret(player, EntityArgument.getPlayer(context, "recipient"),
+                                        StringArgumentType.getString(context, "message")))))))
+                .then(literal("handout").then(argument("audience", StringArgumentType.word())
+                        .then(argument("card", StringArgumentType.greedyString()).executes(context -> run(context, player ->
+                                OnlineParty.handout(player, StringArgumentType.getString(context, "audience"),
+                                        StringArgumentType.getString(context, "card")))))))
                 .then(literal("give_gear").then(argument("hero", StringArgumentType.word())
                         .suggests((context, builder) -> net.minecraft.commands.SharedSuggestionProvider.suggest(
                                 java.util.Arrays.stream(net.dnd5ecraft.rules.campaign.CampaignHero.values())

@@ -105,7 +105,7 @@ class BestiaryCombatTest {
         var combat = combat(sides -> sides, caster, captain, hero);
         combat.start();
         combat.damage(hero.id(), captain.id(), Map.of(DamageType5e.FIRE, 45), false);
-        var plan = net.dnd5ecraft.combat.MonsterAiDirector.plan(combat, caster.id());
+        var plan = net.dnd5ecraft.combat.MonsterAiDirector.plan(combat, caster.id()).orElseThrow();
         assertEquals("healing_word", plan.spell());
         assertEquals(captain.id(), plan.target());
         net.dnd5ecraft.combat.MonsterAiDirector.execute(combat, caster.id(), 0);

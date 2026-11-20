@@ -60,7 +60,7 @@ public final class BestiaryTurnState {
 
     public int beginTurn(int currentHp, boolean environmentBlocksRegeneration, IntUnaryOperator roller) {
         if (preset != BestiaryPreset.CAPTAIN_MORGAN) renewLegendaryActions();
-        if (has(Feature.BREATH_RECHARGE) && !breathReady) {
+        if (preset != BestiaryPreset.DEATH_KNIGHT && has(Feature.BREATH_RECHARGE) && !breathReady) {
             breathReady = AbilityCheckEngine.rollDie(6, roller) >= 5;
         }
         boolean regenerates = !regenerationSuppressed && !environmentBlocksRegeneration
@@ -104,6 +104,7 @@ public final class BestiaryTurnState {
 
     public void recoverDailyResources() {
         legendaryResistances = preset.legendaryLimit();
+        if (preset == BestiaryPreset.DEATH_KNIGHT) breathReady = true;
     }
 
     public Snapshot snapshot() {

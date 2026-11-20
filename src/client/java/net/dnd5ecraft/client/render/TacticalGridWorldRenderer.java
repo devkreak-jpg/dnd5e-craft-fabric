@@ -33,12 +33,18 @@ public final class TacticalGridWorldRenderer {
                 || context.matrixStack() == null || context.consumers() == null) return;
         var combat = ClientDndState.combat();
         var area = ClientActions.areaPreview();
-        if ((combat == null || !combat.ownsTurn()) && area == null) return;
+        var zones = ClientDndState.online().zones();
+        if ((combat == null || !combat.ownsTurn()) && area == null && zones.isEmpty()) return;
         var matrices = context.matrixStack();
         var camera = context.camera().getPosition();
         matrices.pushPose();
         matrices.translate(-camera.x, -camera.y, -camera.z);
         var lines = context.consumers().getBuffer(RenderType.lines());
+        for (var zone : zones) {
+            var origin = zone.area().origin();
+            if (camera.distanceToSqr(origin.x(), origin.y(), origin.z()) > 64 * 64) continue;
+            AreaWireframe.edges(zone.area()).forEach(edge -> WorldDrawing.segment(matrices, lines, edge.from(), edge.to(), 0x707EC5E8));
+        }
         if (area != null) AreaWireframe.edges(area).forEach(edge -> WorldDrawing.segment(matrices, lines, edge.from(), edge.to(), ARCANE));
         if (combat != null && combat.ownsTurn()) {
             Cell goal = ClientActions.hoveredCell();
@@ -106,7 +112,7 @@ public final class TacticalGridWorldRenderer {
 
     private static boolean hasThreat(Combat combat, Cell from, Cell to) {
         var actor = combat.creature(combat.controlledActor());
-        return combat.initiative().stream().anyMatch(enemy -> enemy.team() != actor.team() && enemy.hp() > 0
+        return combat.initiative().stream().anyMatch(enemy -> enemy.team() != actor.team() && !enemy.offline() && enemy.hp() > 0
                 && !enemy.conditions().contains(ConditionType.INCAPACITATED) && !enemy.conditions().contains(ConditionType.PARALYZED)
                 && from.distanceFeet(enemy.cell()) <= enemy.reach() && to.distanceFeet(enemy.cell()) > enemy.reach());
     }

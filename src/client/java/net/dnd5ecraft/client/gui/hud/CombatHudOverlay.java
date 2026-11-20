@@ -77,6 +77,7 @@ public final class CombatHudOverlay {
         }
         campaignVitals(g, client, combat, layout);
         CombatInspector.render(g, client, combat);
+        OnlinePartyHud.render(g, client, combat != null);
         if (ModKeybinds.showHotkeys() && client.screen == null) {
             var keys = List.of(text("campaign.key_sheet", ModKeybinds.sheetKey()),
                     text("campaign.key_magic", ModKeybinds.spellbookKey()), text("campaign.key_roll", ModKeybinds.rollKey()),
@@ -222,8 +223,11 @@ public final class CombatHudOverlay {
             boolean hover = interactive && mouseX >= x && mouseX < x + card && mouseY >= y && mouseY < y + 30;
             int accent = actor.id().equals(combat.activeActor()) || hover ? GOLD : CombatHudView.allied(combat, actor) ? EMERALD : CRIMSON;
             panel(g, x, y, card, 30, accent);
-            clipped(g, font, Component.literal(actor.name()), x + 4, y + 6, card - 8, TEXT);
-            drawProgressBar(g, x + 4, y + 21, card - 8, 3, CombatHudView.healthFraction(actor.hp(), actor.maxHp()), accent);
+            if (actor.offline()) {
+                g.fill(x + 4, y + 20, x + 7, y + 23, MUTED);
+                clipped(g, font, text("online.offline"), x + 10, y + 18, card - 13, MUTED);
+            } else drawProgressBar(g, x + 4, y + 21, card - 8, 3, CombatHudView.healthFraction(actor.hp(), actor.maxHp()), accent);
+            clipped(g, font, Component.literal(actor.name()), x + 4, y + 6, card - 8, actor.offline() ? MUTED : TEXT);
             if (hover) {
                 tooltip = new ArrayList<>();
                 tooltip.add(Component.literal(actor.name()).withStyle(net.minecraft.ChatFormatting.GOLD));

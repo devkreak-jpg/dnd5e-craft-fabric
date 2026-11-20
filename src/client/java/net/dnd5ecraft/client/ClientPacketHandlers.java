@@ -253,10 +253,22 @@ public final class ClientPacketHandlers {
                         input.readVarInt(), readEnum(input, net.dnd5ecraft.rules.conditions.DeathSaveTracker.State.class)));
                 yield ignored -> ClientDndState.party(party);
             }
+            case ONLINE_PARTY -> {
+                var view = net.dnd5ecraft.network.OnlineCodec.read(buf);
+                yield ignored -> ClientDndState.online(view);
+            }
+            case HANDOUT -> {
+                var handout = net.dnd5ecraft.network.OnlineCodec.handout(buf);
+                yield client -> client.setScreen(new net.dnd5ecraft.client.gui.screen.DmHandoutScreen(client.screen, handout));
+            }
             case JOURNAL -> {
                 var notes = buf.readUtf(Protocol.JOURNAL_NOTES_LIMIT);
                 var entries = readList(buf, Protocol.JOURNAL_LIMIT, FriendlyByteBuf::readComponent);
-                yield ignored -> ClientDndState.journal(notes, entries);
+                var cards = readList(buf, Protocol.HANDOUT_LIMIT, net.dnd5ecraft.network.OnlineCodec::handout);
+                yield ignored -> {
+                    ClientDndState.journal(notes, entries);
+                    ClientDndState.handouts(cards);
+                };
             }
             case CINEMATIC_BANNER -> {
                 var title = buf.readComponent();

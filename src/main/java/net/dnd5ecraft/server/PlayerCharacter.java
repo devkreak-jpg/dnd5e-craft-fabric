@@ -17,6 +17,8 @@ public interface PlayerCharacter {
     long dnd5e$disguiseExpiresAt();
     void dnd5e$disguiseExpiresAt(long expiresAt);
     void dnd5e$setCosmetics(boolean enabled);
+    java.util.List<net.dnd5ecraft.network.Protocol.Handout> dnd5e$handouts();
+    void dnd5e$handouts(java.util.List<net.dnd5ecraft.network.Protocol.Handout> entries);
     String dnd5e$journalNotes();
     void dnd5e$journalNotes(String notes);
     boolean dnd5e$isScaleKey(EntityDataAccessor<?> key);

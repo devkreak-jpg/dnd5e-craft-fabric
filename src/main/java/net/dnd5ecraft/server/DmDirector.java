@@ -38,7 +38,7 @@ public final class DmDirector {
     }
 
     private record Selection(UUID npc, boolean speaking) {}
-    private record Bubble(Display.TextDisplay display, DndNpcEntity speaker, long expires) {}
+    private record Bubble(Display.TextDisplay display, net.minecraft.world.entity.LivingEntity speaker, long expires) {}
 
     private static final Map<UUID, Selection> SELECTED = new HashMap<>();
     private static final Map<ServerLevel, List<Bubble>> BUBBLES = new HashMap<>();
@@ -236,13 +236,22 @@ public final class DmDirector {
         bubble(level, npc, Component.translatable("dnd-5e-craft.bark." + variant), 50);
     }
 
+    static void playerEmote(ServerPlayer player, Component text) {
+        bubble(player.serverLevel(), player, text, 70, .375f);
+    }
+
     private static void bubble(ServerLevel level, DndNpcEntity npc, Component text, int duration) {
+        bubble(level, npc, text, duration, 1f);
+    }
+
+    private static void bubble(ServerLevel level, net.minecraft.world.entity.LivingEntity npc, Component text, int duration, float viewRange) {
         var display = EntityType.TEXT_DISPLAY.create(level);
         if (display == null) return;
         var tag = new CompoundTag();
         tag.putString("text", Component.Serializer.toJson(text));
         tag.putString("billboard", "center");
         tag.putInt("line_width", 160);
+        tag.putFloat("view_range", viewRange);
         tag.putBoolean("Invulnerable", true);
         var point = npc.position().add(0, npc.getBbHeight() + .35, 0);
         display.load(tag);

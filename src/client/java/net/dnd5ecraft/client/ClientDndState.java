@@ -28,6 +28,12 @@ public final class ClientDndState {
     private static List<Component> journal = List.of();
     private static String journalNotes;
 
+    private static Protocol.OnlineView online = new Protocol.OnlineView(List.of(), null, List.of());
+    private static List<Protocol.Handout> handouts = List.of();
+    public static Protocol.OnlineView online() { return online; }
+    static void online(Protocol.OnlineView value) { online = value; }
+    public static List<Protocol.Handout> handouts() { return handouts; }
+    static void handouts(List<Protocol.Handout> value) { handouts = List.copyOf(value); }
     public static List<Component> journal() { return journal; }
     public static String journalNotes() { return journalNotes; }
     static void journal(String notes, List<Component> entries) {
@@ -197,12 +203,15 @@ public final class ClientDndState {
         whisper = inspiration = tabletop = smell = false;
         results.clear();
         journal = List.of();
+        handouts = List.of();
+        online = new Protocol.OnlineView(List.of(), null, List.of());
         journalNotes = null;
         prompt = null;
         clearWorldEffects();
     }
 
     static void clearWorldEffects() {
+        online = new Protocol.OnlineView(online.party(), online.ready(), List.of());
         banner = null;
         shortRest = false;
         lastHit = null;

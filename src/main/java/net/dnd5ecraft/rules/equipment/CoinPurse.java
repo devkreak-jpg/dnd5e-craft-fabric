@@ -3,6 +3,27 @@ package net.dnd5ecraft.rules.equipment;
 import java.util.Optional;
 
 public record CoinPurse(long copper, long silver, long electrum, long gold, long platinum) {
+    public enum Denomination { CP, SP, EP, GP, PP }
+    public record Transfer(CoinPurse payer, CoinPurse payee) {}
+
+    public Optional<Transfer> transfer(CoinPurse recipient, long amount, Denomination denomination) {
+        if (amount <= 0) throw new IllegalArgumentException("Coin transfer amount must be positive");
+        CoinPurse payment = switch (denomination) {
+            case CP -> new CoinPurse(amount, 0, 0, 0, 0);
+            case SP -> new CoinPurse(0, amount, 0, 0, 0);
+            case EP -> new CoinPurse(0, 0, amount, 0, 0);
+            case GP -> new CoinPurse(0, 0, 0, amount, 0);
+            case PP -> new CoinPurse(0, 0, 0, 0, amount);
+        };
+        if (copper < payment.copper || silver < payment.silver || electrum < payment.electrum
+                || gold < payment.gold || platinum < payment.platinum) return Optional.empty();
+        var remainder = new CoinPurse(copper - payment.copper, silver - payment.silver, electrum - payment.electrum,
+                gold - payment.gold, platinum - payment.platinum);
+        var credited = recipient.deposit(payment);
+        credited.valueInCopper();
+        return Optional.of(new Transfer(remainder, credited));
+    }
+
     public static final CoinPurse EMPTY = new CoinPurse(0, 0, 0, 0, 0);
 
     public CoinPurse {

@@ -347,7 +347,7 @@ final class CombatSpellZoneResolver {
             }
             return;
         }
-        if (target.dead()) throw new IllegalArgumentException("Target is dead");
+        if (target.offline() || target.dead()) throw new IllegalArgumentException("Target is unavailable");
         if (kind == EffectKind.DAMAGE || kind == EffectKind.MARK || kind == EffectKind.SPIRITUAL_WEAPON || kind == EffectKind.PARALYSIS || kind == EffectKind.BLINDNESS || kind == EffectKind.BANE) {
             manager.validateHostileTarget(caster, target);
         }
@@ -490,7 +490,7 @@ final class CombatSpellZoneResolver {
     private void resolveSaveTargets(Cast cast, int index, int amount, long time) {
         for (int i = index; i < cast.targets.size(); i++) {
             var target = cast.targets.get(i);
-            if (target.dead() && cast.spell.effect().kind() != EffectKind.REVIVE) continue;
+            if (target.offline() || target.dead() && cast.spell.effect().kind() != EffectKind.REVIVE) continue;
             var ability = cast.spell.save().orElse(null);
             var element = cast.spell.effect().damageType().orElse(null);
             if (ability == null && (!absorbable(element) || !hasReactionSlot(target, "absorb_elements"))) {
@@ -543,7 +543,7 @@ final class CombatSpellZoneResolver {
     private void resolveSpellAttack(Cast cast, int index, long nowMillis) {
         if (index == cast.targets.size()) return;
         CombatantEntry target = cast.targets.get(index);
-        if (target.dead()) {
+        if (target.offline() || target.dead()) {
             resolveSpellAttack(cast, index + 1, nowMillis);
             return;
         }
@@ -586,7 +586,7 @@ final class CombatSpellZoneResolver {
     }
 
     private void applySpell(Cast cast, CombatantEntry target, int amount, boolean saved, boolean critical, boolean dodge) {
-        if (target.dead() && cast.spell.effect().kind() != EffectKind.REVIVE) return;
+        if (target.offline() || target.dead() && cast.spell.effect().kind() != EffectKind.REVIVE) return;
         world.spellVisual(cast.spell.id(), cast.caster, target);
         switch (cast.spell.effect().kind()) {
             case DAMAGE, SPIRITUAL_WEAPON -> {
@@ -666,6 +666,10 @@ final class CombatSpellZoneResolver {
         return template.place(origin, facing.length() < 1e-8 ? new Vec3(1, 0, 0) : facing, cast.caster.bounds(), true);
     }
 
+    List<net.dnd5ecraft.network.Protocol.SpellZone> activeZones() {
+        return zones.values().stream().map(zone -> new net.dnd5ecraft.network.Protocol.SpellZone(zone.cast.spell.id(), area(zone))).toList();
+    }
+
     private Area area(SpellZone zone) {
         return zone.cast.spell.id().equals("spirit_guardians")
                 ? zoneArea(zone.cast, zone.cast.caster.cell().center()) : zone.area;
@@ -691,6 +695,7 @@ final class CombatSpellZoneResolver {
     }
 
     void triggerZones(CombatantEntry entry, Cell previous) {
+        if (entry.offline()) return;
         if (entry.dead()) return;
         for (SpellZone zone : List.copyOf(zones.values())) {
             String id = zone.cast.spell.id();

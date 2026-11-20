@@ -30,6 +30,28 @@ public final class DndNpcEntityRenderer extends HumanoidMobRenderer<DndNpcEntity
         };
     }
 
+    public static void registerAmbientParticles() {
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (client.level == null || client.player == null || client.isPaused()
+                    || client.level.getGameTime() % 8 != 0) return;
+            for (var entity : client.level.entitiesForRendering()) {
+                if (!(entity instanceof DndNpcEntity npc) || !npc.isAlive() || npc.isInvisibleTo(client.player)
+                        || npc.distanceToSqr(client.player) > 32 * 32) continue;
+                var particle = switch (npc.preset()) {
+                    case SPECTER, LICH_ARCHMAGE -> net.minecraft.core.particles.ParticleTypes.SOUL;
+                    case DEATH_KNIGHT, BEARDED_DEVIL -> net.minecraft.core.particles.ParticleTypes.SMALL_FLAME;
+                    case STONE_GOLEM -> net.minecraft.core.particles.ParticleTypes.ENCHANT;
+                    default -> null;
+                };
+                if (particle == null) continue;
+                var random = client.level.random;
+                client.level.addParticle(particle, npc.getX() + (random.nextDouble() - .5) * npc.getBbWidth(),
+                        npc.getY() + npc.getBbHeight() * (.25 + random.nextDouble() * .55),
+                        npc.getZ() + (random.nextDouble() - .5) * npc.getBbWidth(), 0, .02, 0);
+            }
+        });
+    }
+
     @Override protected void scale(DndNpcEntity npc, PoseStack pose, float partialTick) {
         float scale = npc.physicalScale();
         pose.scale(scale, scale, scale);

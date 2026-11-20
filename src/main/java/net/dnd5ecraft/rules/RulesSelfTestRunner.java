@@ -77,6 +77,7 @@ public final class RulesSelfTestRunner {
         runner.campaign();
         runner.studio();
         runner.masterwork();
+        runner.online();
         System.out.printf("%d assertions passed%n", runner.checks);
     }
 
@@ -128,8 +129,75 @@ public final class RulesSelfTestRunner {
                 "echo_sigil", "eldritch_cannon_controller", "crowd_spawner_staff", "dm_master_wand", "bag_of_holding"))
             verifyPng(textures.resolve("item/" + item + ".png"), 32, 32);
         var skins = net.dnd5ecraft.entity.NpcSkinCatalog.ALL;
-        check("masterwork skin count", 34, skins.size());
+        check("grand bestiary skin count", true, skins.size() >= 64);
         for (var skin : skins) verifyPng(textures.resolve("entity/skins/" + skin.id() + ".png"), 64, 64);
+    }
+
+    private void online() {
+        var catalog = net.dnd5ecraft.entity.BestiaryRegistry5e.presets();
+        check("grand bestiary template count", true, catalog.size() >= 40);
+        var assigned = new java.util.HashSet<net.dnd5ecraft.entity.NpcSkinCatalog>();
+        for (var preset : catalog) {
+            int xp = net.dnd5ecraft.combat.EncounterDifficultyCalculator.xp(preset.challenge());
+            check(preset.id() + " template", true, xp >= 25 && xp <= 8400 && preset.maxHp() > 0
+                    && preset.armor() > 0 && preset.combatRole() != null && !preset.attacks().isEmpty()
+                    && preset.scale() >= .65f && preset.scale() <= 2.2f
+                    && net.dnd5ecraft.entity.BestiaryRegistry5e.defaultSkin(preset).filter(assigned::add).isPresent());
+        }
+        var hashes = new java.util.HashSet<String>();
+        for (var skin : net.dnd5ecraft.entity.NpcSkinCatalog.ALL) {
+            var path = Path.of("src/main/resources/assets/dnd-5e-craft/textures/entity/skins", skin.id() + ".png");
+            try {
+                var image = javax.imageio.ImageIO.read(path.toFile());
+                var bytes = java.nio.ByteBuffer.allocate(64 * 64 * Integer.BYTES);
+                for (int pixel : image.getRGB(0, 0, 64, 64, null, 0, 64)) bytes.putInt(pixel);
+                check(skin.id() + " unique skin pixels", true, hashes.add(java.util.HexFormat.of().formatHex(
+                        java.security.MessageDigest.getInstance("SHA-256").digest(bytes.array()))));
+            } catch (java.io.IOException | java.security.NoSuchAlgorithmException failure) {
+                throw new AssertionError(path.toString(), failure);
+            }
+        }
+        var coins = new net.dnd5ecraft.rules.equipment.CoinPurse(0, 0, 0, 22, 0);
+        var unit = net.dnd5ecraft.rules.equipment.CoinPurse.Denomination.GP;
+        var transfer = coins.transfer(coins, 7, unit).orElseThrow();
+        check("paid exact coins", 15L, transfer.payer().gold());
+        check("received exact coins", 29L, transfer.payee().gold());
+        check("insufficient coins", true, coins.transfer(coins, 23, unit).isEmpty());
+
+        var participants = java.util.List.of(new java.util.UUID(0, 1), new java.util.UUID(0, 2));
+        var ready = new net.dnd5ecraft.rules.campaign.PartyReadyCheck("Test", participants);
+        ready.respond(ready.id(), participants.get(0), true);
+        check("waiting for another player", false, ready.allReady());
+        ready.respond(ready.id(), participants.get(1), true);
+        check("everyone ready", true, ready.allReady());
+
+        var left = onlineActor(participants.get(0), 0, 20);
+        var right = onlineActor(participants.get(1), 1, 15);
+        var combat = new net.dnd5ecraft.combat.CombatManager(new net.dnd5ecraft.combat.CombatEncounterState(
+                java.util.List.of(left, right)), new net.dnd5ecraft.combat.CombatManager.Battlefield() {
+            public boolean canOccupy(net.dnd5ecraft.combat.GridMovementTracker.Cell cell) { return true; }
+            public boolean difficult(net.dnd5ecraft.combat.GridMovementTracker.Cell cell) { return false; }
+            public boolean blocksCover(net.dnd5ecraft.combat.GridMovementTracker.Cell cell) { return false; }
+            public net.dnd5ecraft.combat.LightingVisionEvaluator.Light lightAt(net.dnd5ecraft.combat.GridMovementTracker.Cell cell) {
+                return net.dnd5ecraft.combat.LightingVisionEvaluator.Light.BRIGHT;
+            }
+        }, sides -> sides);
+        combat.start();
+        check("can only skip offline actors", false, combat.skipOfflineTurn(0));
+        combat.connection(left.id(), true, 1);
+        check("offline turn advances", true, combat.skipOfflineTurn(2));
+        check("offline actor stays in initiative", 2, combat.snapshot().initiative().size());
+        check("AI with null actor", true, net.dnd5ecraft.combat.MonsterAiDirector.plan(combat, null).isEmpty());
+    }
+
+    private static net.dnd5ecraft.combat.CombatantEntry onlineActor(java.util.UUID id, int team, int initiative) {
+        return new net.dnd5ecraft.combat.CombatantEntry(id, "Tester " + team, team, initiative,
+                new net.dnd5ecraft.combat.GridMovementTracker.Cell(team, 0, 0),
+                net.dnd5ecraft.entity.BestiaryPreset.GOBLIN.combatStats(),
+                new net.dnd5ecraft.rules.equipment.DamagePipeline.HitPoints(10, 10, 0, 0),
+                net.dnd5ecraft.rules.conditions.DeathSaveTracker.CONSCIOUS,
+                net.dnd5ecraft.rules.equipment.DamagePipeline.Defenses.NONE,
+                net.dnd5ecraft.rules.equipment.ExhaustionLevel.NONE, java.util.List.of());
     }
 
     private void verifyPng(Path path, int width, int height) {

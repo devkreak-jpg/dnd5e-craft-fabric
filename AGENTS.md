@@ -13,7 +13,7 @@ java -cp build/classes/java/main net.dnd5ecraft.rules.RulesSelfTestRunner
 ./gradlew --offline --no-daemon build --console=plain -q | tail -n 60
 ```
 
-The installable remapped artifact is `build/libs/dnd-5e-craft-3.4.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 4 adds the NPC Studio skin field. Install v3.4 on both sides of a multiplayer session. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
+The installable remapped artifact is `build/libs/dnd-5e-craft-3.5.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 5 adds the online roster, offline initiative state, active spell zones, and handouts. Install v3.5 on both sides of a multiplayer session. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
 
 ## Phase checklist
 
@@ -30,6 +30,7 @@ The phase checks cover the offline build, the dedicated-server GameTests, and th
 - [x] Phase 7. English and Russian localizations, Mixin side audit, and remapped release verification.
 - [x] **v3.3 Studio Masterpiece Edition**. Racial cosmetics and scaling, radial actions, shader-safe world rendering, and server-authoritative combat feedback.
 - [x] **v3.4 Masterwork Edition**. Tactical NPC roles, Captain Morgan, the demo map, 34 layered skins, and masterwork equipment textures.
+- [x] **v3.5 Online & Grand Bestiary Edition**. 43 bestiary templates, 68 skins, reconnect and offline-turn recovery, and the co-op tools.
 
 ## v1.1 hardening
 
@@ -69,6 +70,15 @@ The phase checks cover the offline build, the dedicated-server GameTests, and th
 - The 37 standard weapons, six armor items, shield, and campaign gear use 32×32 inventory sprites. The six armor items each have dedicated worn layers. The weapon item models retain their existing grip transforms.
 - Brutes score flanks and pressure casters. Skirmishers seek cover and disengage from melee. Support casters heal endangered allies and target concentrating enemies. Captain Morgan Blackfang parries with his reaction, has two Legendary Resistances per day and two Legendary Actions per round, and calls in two bandits when he first reaches half health.
 - Operators can build the demo with `/dnd dm build_demo_map` or **Build Demo Map** in the Director Palette (**Shift+N**). The first build clears a 38×38 area beginning five blocks south of the operator, centered on their X coordinate. Run it on an open site. Subsequent builds reuse the saved site in that dimension and rebuild the tavern, square, and crypt, replacing the demo NPCs and restocking the chest. Enter the crypt, speak to Morgan, then use `/dnd dm start` to run the encounter.
+
+## v3.5 Online & Grand Bestiary Edition
+
+- In the Director Palette (**Shift+N**), the **Bestiary** tab filters 43 templates by challenge rating, undead, bosses, or town NPCs, and searches by name or ID. **Spawn Here** uses the block face under the crosshair with a nearby fallback. NPC Studio offers 68 layered skins. The Crowd Spawner can use all 24 town appearances.
+- The **Co-op** tab starts a ready check, skips the current turn when its actor is offline, and sends a handout. Players press **]** for Ready or **[** for Need a Moment. Press **F4** to toggle the party strip.
+- Players keep their initiative entries when they disconnect. An operator can use **Skip Offline Turn** or `/dnd dm skip_turn` when an offline actor owns the current turn. Joining the encounter dimension restores the actor, sheet, zone outlines, and tracked companions. The roster shares names, HP, AC, and connection status.
+- `/dnd em <action>` shares a roleplay message within 24 blocks. Operators can use `/dnd dm secret <player> <text>` for a private whisper. `/dnd pay <player> <amount> <cp|sp|ep|gp|pp>` transfers the named denomination directly between sheets.
+- Send a handout from the Co-op tab or with `/dnd dm handout <all|player> <title> | <body>`. Each recipient can reopen the last eight handouts from the character sheet’s Journal tab.
+- `/dnd dm build_demo_map here` saves a new origin at the operator’s block position and removes the old demo NPCs. Existing buildings at the former site stay in place. The unqualified command rebuilds at the saved origin.
 
 ## Phase 0 files
 

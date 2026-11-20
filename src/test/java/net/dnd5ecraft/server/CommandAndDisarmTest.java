@@ -35,7 +35,8 @@ class CommandAndDisarmTest {
         var dispatcher = new CommandDispatcher<CommandSourceStack>();
         dispatcher.register(DndCommands.commandTree());
         for (String command : List.of("preset finneas", "class fighter", "subclass champion", "feat resilient dex",
-                "dm build_demo_map", "dm give_gear alexander", "dm give_gear minotaur Player")) {
+                "dm build_demo_map", "dm build_demo_map here", "dm skip_turn", "dm readycheck Party",
+                "dm secret Player clue", "dm handout all Spring | text", "dm give_gear alexander", "dm give_gear minotaur Player")) {
             assertNull(dispatcher.parse("dnd " + command, source(0)).getContext().getCommand(), command);
             assertNull(dispatcher.parse("dnd " + command, source(1)).getContext().getCommand(), command);
             assertNotNull(dispatcher.parse("dnd " + command, source(2)).getContext().getCommand(), command);

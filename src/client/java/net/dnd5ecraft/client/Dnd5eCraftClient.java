@@ -23,6 +23,7 @@ public final class Dnd5eCraftClient implements ClientModInitializer {
         ModKeybinds.register();
         CombatHudOverlay.register();
         EntityRendererRegistry.register(ModEntities.DND_NPC, DndNpcEntityRenderer::new);
+        DndNpcEntityRenderer.registerAmbientParticles();
         EntityRendererRegistry.register(ModEntities.ELDRITCH_CANNON, net.dnd5ecraft.client.render.EldritchCannonRenderer::new);
         EntityRendererRegistry.register(ModEntities.ECHO_AVATAR, net.dnd5ecraft.client.render.EchoAvatarRenderer::new);
         TacticalGridWorldRenderer.register();

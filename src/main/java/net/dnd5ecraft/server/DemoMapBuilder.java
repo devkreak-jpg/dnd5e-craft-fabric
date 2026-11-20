@@ -46,14 +46,20 @@ public final class DemoMapBuilder {
         this.origin = origin;
     }
 
-    public static void build(ServerPlayer operator) {
+    public static void build(ServerPlayer operator) { build(operator, false); }
+
+    public static void buildHere(ServerPlayer operator) { build(operator, true); }
+
+    private static void build(ServerPlayer operator, boolean relocate) {
         if (!operator.hasPermissions(2)) throw new IllegalStateException("Operator permissions are required");
         var level = operator.serverLevel();
         if (TacticalCombat.hasEncounter(level)) throw new IllegalStateException("End the tactical encounter before rebuilding the demo");
         var site = level.getDataStorage().computeIfAbsent(Site::load, Site::new, "dnd5e_demo_site");
-        var origin = site.origin != null ? site.origin : operator.blockPosition().offset(-SIZE / 2, 0, 5);
+        var origin = relocate ? operator.blockPosition() : site.origin != null ? site.origin : operator.blockPosition().offset(-SIZE / 2, 0, 5);
         var demo = new DemoMapBuilder(level, origin);
         demo.prepare(operator);
+        if (relocate && site.origin != null && !site.origin.equals(origin))
+            new DemoMapBuilder(level, site.origin).clearActors();
         site.origin = origin;
         site.setDirty();
         demo.tavern();
@@ -85,18 +91,24 @@ public final class DemoMapBuilder {
         var footprint = new AABB(origin.below(3), far.offset(1, 1, 1));
         if (!level.getEntitiesOfClass(ServerPlayer.class, footprint, player -> player != operator && !player.isSpectator()).isEmpty())
             throw new IllegalStateException("Move the other players out of the demo site before building");
-        for (int x = origin.getX() >> 4; x <= far.getX() >> 4; x++)
-            for (int z = origin.getZ() >> 4; z <= far.getZ() >> 4; z++) level.getChunk(x, z);
         if (footprint.contains(operator.position())) operator.teleportTo(origin.getX() + SIZE / 2.0,
                 origin.getY(), origin.getZ() - 1.5);
-        level.getEntitiesOfClass(DndNpcEntity.class, footprint.inflate(24), npc -> npc.getTags().contains(DEMO_NPC))
-                .forEach(DndNpcEntity::discard);
+        clearActors();
         for (BlockPos pos : BlockPos.betweenClosed(origin, far)) {
             if (level.getBlockEntity(pos) instanceof Clearable container) container.clearContent();
             if (!level.isEmptyBlock(pos)) level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
         }
         fill(0, -3, 0, SIZE - 1, -2, SIZE - 1, Blocks.STONE);
         fill(0, -1, 0, SIZE - 1, -1, SIZE - 1, Blocks.GRASS_BLOCK);
+    }
+
+    private void clearActors() {
+        var far = at(SIZE - 1, CLEARANCE, SIZE - 1);
+        for (int x = origin.getX() >> 4; x <= far.getX() >> 4; x++)
+            for (int z = origin.getZ() >> 4; z <= far.getZ() >> 4; z++) level.getChunk(x, z);
+        var bounds = new AABB(origin.below(3), far.offset(1, 1, 1)).inflate(24);
+        level.getEntitiesOfClass(DndNpcEntity.class, bounds, npc -> npc.getTags().contains(DEMO_NPC))
+                .forEach(DndNpcEntity::discard);
     }
 
     private BlockPos at(int x, int y, int z) { return origin.offset(x, y, z); }

@@ -265,7 +265,11 @@ public final class CombatantEntry {
         return new ConditionEffectApplier(active, exhaustion);
     }
 
-    public boolean canAct() { return !surprised && !dead() && conditionEffects().canAct(); }
+    int drainedMaximum;
+    boolean offline;
+    public boolean offline() { return offline; }
+
+    public boolean canAct() { return !offline && !surprised && !dead() && conditionEffects().canAct(); }
 
     boolean canAttack() {
         return canAct() && (attacksRemaining > 0 || hasteAction || turn.canSpend(TurnEconomy.Resource.ACTION));
@@ -279,7 +283,7 @@ public final class CombatantEntry {
         int speed = Math.max(0, stats.speedFeet + (feat(FeatType.MOBILE) ? 10 : 0) - speedPenaltyFeet - (has(Effect.SLOWED) ? 10 : 0));
         if (has(Effect.HASTE)) speed *= 2;
         if (guardiansSlow) speed /= 2;
-        return surprised || dead() || has(Effect.LETHARGY) || speedLockedTurn == turns ? 0 : conditionEffects().speedFeet(speed);
+        return offline || surprised || dead() || has(Effect.LETHARGY) || speedLockedTurn == turns ? 0 : conditionEffects().speedFeet(speed);
     }
 
     public int armorClass() {
