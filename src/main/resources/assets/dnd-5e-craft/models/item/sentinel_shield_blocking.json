@@ -1,0 +1,73 @@
+{
+  "parent": "dnd-5e-craft:item/sentinel_shield",
+  "display": {
+    "firstperson_righthand": {
+      "rotation": [
+        0,
+        12,
+        4
+      ],
+      "translation": [
+        -3.4,
+        3.2,
+        -2
+      ],
+      "scale": [
+        0.87,
+        0.87,
+        0.87
+      ]
+    },
+    "thirdperson_righthand": {
+      "rotation": [
+        12,
+        -35,
+        0
+      ],
+      "translation": [
+        -1.5,
+        4,
+        -1
+      ],
+      "scale": [
+        0.95,
+        0.95,
+        0.95
+      ]
+    },
+    "firstperson_lefthand": {
+      "rotation": [
+        0,
+        -12,
+        -4
+      ],
+      "translation": [
+        3.4,
+        3.2,
+        -2
+      ],
+      "scale": [
+        0.87,
+        0.87,
+        0.87
+      ]
+    },
+    "thirdperson_lefthand": {
+      "rotation": [
+        12,
+        35,
+        0
+      ],
+      "translation": [
+        1.5,
+        4,
+        -1
+      ],
+      "scale": [
+        0.95,
+        0.95,
+        0.95
+      ]
+    }
+  }
+}

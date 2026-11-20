@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/handheld",
+  "textures": {
+    "layer0": "dnd-5e-craft:item/trigger_zone_wand"
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "parent": "minecraft:item/handheld",
+  "textures": {
+    "layer0": "dnd-5e-craft:item/pike"
+  },
+  "display": {
+    "thirdperson_righthand": {
+      "rotation": [
+        0,
+        -90,
+        37
+      ],
+      "translation": [
+        0,
+        3.8,
+        1.2
+      ],
+      "scale": [
+        1.28,
+        1.28,
+        1.28
+      ]
+    },
+    "thirdperson_lefthand": {
+      "rotation": [
+        0,
+        90,
+        -37
+      ],
+      "translation": [
+        0,
+        3.8,
+        1.2
+      ],
+      "scale": [
+        1.28,
+        1.28,
+        1.28
+      ]
+    },
+    "firstperson_righthand": {
+      "rotation": [
+        0,
+        -90,
+        22
+      ],
+      "translation": [
+        1.4,
+        2.8,
+        1.2
+      ],
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "firstperson_lefthand": {
+      "rotation": [
+        0,
+        90,
+        -22
+      ],
+      "translation": [
+        1.4,
+        2.8,
+        1.2
+      ],
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "ground": {
+      "translation": [
+        0,
+        3,
+        0
+      ],
+      "scale": [
+        0.45,
+        0.45,
+        0.45
+      ]
+    },
+    "gui": {
+      "scale": [
+        0.9,
+        0.9,
+        0.9
+      ]
+    }
+  }
+}

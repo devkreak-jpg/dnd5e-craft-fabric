@@ -1,0 +1,154 @@
+# DnD 5e Craft
+
+Minecraft **1.20.1**, Java **17**, official Mojang mappings, mod ID **`dnd-5e-craft`**, and base package **`net.dnd5ecraft`**. The project pins Fabric Loader **0.20.1** and Fabric API **0.92.12+1.20.1**.
+
+Use the existing checkout and keep `loom.officialMojangMappings()` and `splitEnvironmentSourceSets()` enabled. Put client API calls and renderers in `src/client/java`. Keep common classes loadable on a dedicated server and keep each Mixin configuration on its intended side. Prefix Mixin members with `dnd5e$`, mark additions `@Unique`, and use injections. Register attributes for the NPC, cannon, and echo on the common entry point and their renderers on the client entry point. Use Minecraft 1.20.1's three-argument `DimensionDataStorage.computeIfAbsent` and the supplier form of `CommandSourceStack.sendSuccess`.
+
+Run from the repository root with Java 17 and a populated Gradle cache.
+
+```bash
+set -o pipefail
+./gradlew --offline --no-daemon compileJava compileClientJava --console=plain -q | tail -n 60
+java -cp build/classes/java/main net.dnd5ecraft.rules.RulesSelfTestRunner
+./gradlew --offline --no-daemon build --console=plain -q | tail -n 60
+```
+
+The installable remapped artifact is `build/libs/dnd-5e-craft-3.5.0.jar`. Install the same artifact and Fabric API on each client and the server. Protocol version 5 adds the online roster, offline initiative state, active spell zones, and handouts. Install v3.5 on both sides of a multiplayer session. Worlds saved using the old `dnd5ecraft` registry namespace require a migration before upgrading. Test with a new world.
+
+## Phase checklist
+
+The phase checks cover the offline build, the dedicated-server GameTests, and the graphical Minecraft client smoke test.
+
+- [x] Phase 0. Namespace, build setup, Mojang mappings, resources, and entry points.
+- [x] Phase 1. Dice, abilities, equipment, conditions, character progression, rests, and persistence.
+- [x] Phase 2. Spell registry with 56 entries, spell slots, concentration, 3D targeting, turn economy, combat actions, and reactions.
+- [x] Phase 3. Canonical bestiary of 15 presets, NPCs, dialogue, traps, cutscenes, 59 registered items, commands, and server Mixins.
+- [x] Phase 4. Versioned C2S requests and S2C updates for characters, encounters, reactions, DM party data, notices, and screen signals.
+- [x] Phase 5A. Client state, keybinds, interactive character sheet, combat HUD, NPC renderer, and starter English and Russian strings.
+- [x] Phase 5B. Character creation, spellbook, dialogue, NPC Studio, trigger-zone editor, and DM console screens.
+- [x] Phase 6. Tactical world rendering, spinning die, AoE previews, floating combat bars, camera, darkvision, and NPC rendering.
+- [x] Phase 7. English and Russian localizations, Mixin side audit, and remapped release verification.
+- [x] **v3.3 Studio Masterpiece Edition**. Racial cosmetics and scaling, radial actions, shader-safe world rendering, and server-authoritative combat feedback.
+- [x] **v3.4 Masterwork Edition**. Tactical NPC roles, Captain Morgan, the demo map, 34 layered skins, and masterwork equipment textures.
+- [x] **v3.5 Online & Grand Bestiary Edition**. 43 bestiary templates, 68 skins, reconnect and offline-turn recovery, and the co-op tools.
+
+## v1.1 hardening
+
+- `CombatManager` orchestrates turns and retains its public API. `CombatSpellZoneResolver` owns spell targeting, concentration, timed aid, and persistent zones. `CombatManeuverResolver` owns weapon attacks, martial maneuvers, and combat class features.
+- UUID-keyed network sessions retain draft rolls and synchronize the sheet and encounter after respawn or dimension travel. Encounters pause while a participant is in another dimension or waiting to respawn. Rituals keep their remaining time across a player replacement and can resume at the original casting site.
+- DM observers see a read-only initiative ribbon, and the client uses the server's reaction window duration when the optional Protocol v2 update channel is available. The Tavern Keeper, Merchant, and Town Guard have localized starter dialogue and no attacks.
+
+## v1.2 tabletop controls
+
+- Use the sheet header to set roll mode, whisper to online DMs, or spend Inspiration on the next d20. Click ability cards, skill rows, or weapon buttons to roll. Right-click a tray die to build a pool. A natural 20 on a weapon hit applies to the next damage roll for the same equipped weapon.
+- Start a short rest to spend hit dice from the sheet. Tactical maneuvers and class features continue to use server turn checks. Use the DM console to send a roll request, and press **R** to answer it.
+- The optional tabletop channel carries roll cards, prompts, and concentration details within Protocol v2. Whisper recipients are the roller and online operators. The spellbook filters available spells, and checked dialogue displays its result before advancing.
+
+## v3.0 Campaign Edition
+
+- Open **Party Presets** from character creation or use `/dnd preset <finneas|alexander|harlequin|minotaur>`. Preset editing covers name, race, background, six ability scores, maximum HP, and personality. The preset chooses the hero's class progression, subclass, and starting gear. Operators can change an existing character's preset. Starting equipment is granted on first creation.
+- The Actions tab opens the hero's campaign actions. Press **H** to cycle tactical attack profiles, including thrown melee weapons. Press **P** to fire a summoned cannon or **Shift+P** to use its HUD button. At zero HP, **R** rolls a death save when eligible.
+- Hold **V** and release over an action in the radial menu. Hold **Shift** for the kneeling pose. **F12** toggles the HUD keys. **O** places a world ping. Enable racial features from the Inventory tab and Keen Smell from Alexander's sheet.
+- Operators can press **Shift+N** for the Director Palette. Right-click an NPC with the DM wand to select it, then click a destination. Sneak-click a destination to add a waypoint while the selected NPC is in Patrol mode. Use **Speak as NPC** or `/dnd dm speak <npc>` to toggle NPC speech. The NPC panel can pick the director's pair after a Harlequin uses Scene Change during their turn.
+- The cannon and echo track their owners and persist with their entity data. The server controls tactical movement, activation costs, targets, and reactions. The client renders companion models, race geometry, actor selection, and the new healthbar. Natural food regeneration leaves the tactical sheet unchanged. Spell and potion healing route through the tactical health rules.
+- Harlequin d20 windows support tactical attacks and direct spell saves. Tabletop d20s and other synchronous checks still use the existing resolution paths. Standard ranged item profiles expose weapon properties and ranges. Tactical ammo consumption and Loading limits are pending.
+- The Journal tab shows the latest 25 visible session events and stores personal notes in player NBT. The DM console splits a supplied total gold amount evenly among character sheets in the current dimension and reports any undistributed remainder.
+- Echo swaps spend a bonus action and 15 feet of movement. Outside encounters the sigil uses a six-second bonus-action cooldown and reduces the movement rate for that interval by the spent share of the character's speed.
+- `CampaignAssetIntegrityTest` checks the item models, decoded PNGs, and crowd skins. `LocalizationTest` checks English and Russian keys and substitutions. Campaign rules tests exercise hero values, combat reactions, weapon profiles, and speed boundaries.
+
+## v3.3 Studio Masterpiece Edition
+
+- Hold **V** to select one of eight radial actions. On your combat turn, aim at an enemy to see the selected attack's range, cover and hit chance. The server checks the target and computes the preview with the encounter's attack rules.
+- Press **O** to mark a visible block or entity within 48 blocks. Players within 96 blocks of the mark in the same dimension hear the ping and see a five-second beacon. The ruler uses each viewer's own distance, at five feet per block. Each player can place one mark per second.
+- The optional Studio packet channel carries resolved damage, healing, saves, critical rolls and rest effects. Only the roller receives the critical or fumble screen effect. A short rest shows the hit points actually restored and a 3.5-second campfire around the resting character.
+- The player and NPC dimension hooks cover direct pose queries as well as cached hitboxes. The client scales each shadow when the dispatcher draws it. Racial features use the eight-tile atlas and honor helmets, disguises, invisibility and the local first-person camera.
+- Client rendering uses textured entity geometry for die faces and overhead bars. Run the standalone rules and resource checks from the repository root. Exercise the radial wheel, combat inspector, die, ping and combat feedback in a shader-enabled client when changing their rendering.
+
+## v3.4 Masterwork Edition
+
+- NPC Studio cycles through 34 layered skins. The bestiary selects default appearances by preset, and the Crowd Spawner uses a themed subset. Saved NPCs can still use older custom crowd textures.
+- The 37 standard weapons, six armor items, shield, and campaign gear use 32×32 inventory sprites. The six armor items each have dedicated worn layers. The weapon item models retain their existing grip transforms.
+- Brutes score flanks and pressure casters. Skirmishers seek cover and disengage from melee. Support casters heal endangered allies and target concentrating enemies. Captain Morgan Blackfang parries with his reaction, has two Legendary Resistances per day and two Legendary Actions per round, and calls in two bandits when he first reaches half health.
+- Operators can build the demo with `/dnd dm build_demo_map` or **Build Demo Map** in the Director Palette (**Shift+N**). The first build clears a 38×38 area beginning five blocks south of the operator, centered on their X coordinate. Run it on an open site. Subsequent builds reuse the saved site in that dimension and rebuild the tavern, square, and crypt, replacing the demo NPCs and restocking the chest. Enter the crypt, speak to Morgan, then use `/dnd dm start` to run the encounter.
+
+## v3.5 Online & Grand Bestiary Edition
+
+- In the Director Palette (**Shift+N**), the **Bestiary** tab filters 43 templates by challenge rating, undead, bosses, or town NPCs, and searches by name or ID. **Spawn Here** uses the block face under the crosshair with a nearby fallback. NPC Studio offers 68 layered skins. The Crowd Spawner can use all 24 town appearances.
+- The **Co-op** tab starts a ready check, skips the current turn when its actor is offline, and sends a handout. Players press **]** for Ready or **[** for Need a Moment. Press **F4** to toggle the party strip.
+- Players keep their initiative entries when they disconnect. An operator can use **Skip Offline Turn** or `/dnd dm skip_turn` when an offline actor owns the current turn. Joining the encounter dimension restores the actor, sheet, zone outlines, and tracked companions. The roster shares names, HP, AC, and connection status.
+- `/dnd em <action>` shares a roleplay message within 24 blocks. Operators can use `/dnd dm secret <player> <text>` for a private whisper. `/dnd pay <player> <amount> <cp|sp|ep|gp|pp>` transfers the named denomination directly between sheets.
+- Send a handout from the Co-op tab or with `/dnd dm handout <all|player> <title> | <body>`. Each recipient can reopen the last eight handouts from the character sheet’s Journal tab.
+- `/dnd dm build_demo_map here` saves a new origin at the operator’s block position and removes the old demo NPCs. Existing buildings at the former site stay in place. The unqualified command rebuilds at the saved origin.
+
+## Phase 0 files
+
+- `settings.gradle`, `build.gradle`, `gradle.properties`, and the Gradle wrapper define the offline build.
+- `src/main/resources/fabric.mod.json` declares `Dnd5eCraftMod` and `Dnd5eCraftClient`. `src/main/resources/dnd-5e-craft.mixins.json` and `src/client/resources/dnd-5e-craft.client.mixins.json` register their respective Mixins.
+- `src/main/resources/assets/dnd-5e-craft/` contains the icon, language files, models, and textures. `src/main/resources/data/dnd-5e-craft/recipes/physical_d20.json` gives the physical d20 a survival recipe.
+
+## Common and server files
+
+Source paths below are relative to `src/main/java/net/dnd5ecraft/`.
+
+### Phase 1
+
+- `Dnd5eCraftMod.java` registers the common implementation.
+- `rules/RulesSelfTestRunner.java` runs from compiled main classes with a plain JVM.
+- `rules/ability/` contains `Ability.java`, `AbilityCheckEngine.java`, `DiceRoller.java`, `PassiveSenseTracker.java`, `ProficiencyLevel.java`, `Skill.java`.
+- `rules/character/` contains `BackgroundType.java`, `CharacterProgression.java`, `CharacterResources.java`, `CharacterSheetData.java`, `ClassFeature.java`, `ClassType.java`, `FeatType.java`, `MulticlassValidator.java`, `PlayerSheetStorage.java`, `PointBuyCalculator.java`, `RaceType.java`, `SubclassType.java`.
+- `rules/conditions/` contains `ConditionEffectApplier.java`, `ConditionInstance.java`, `ConditionType.java`, `DeathSaveTracker.java`.
+- `rules/equipment/` contains `ArmorCategory.java`, `ArmorFormulaEngine.java`, `AttunementManager.java`, `CoinPurse.java`, `DamagePipeline.java`, `DamageType5e.java`, `ExhaustionLevel.java`, `WeaponProperty.java`, `WeaponStatsRegistry.java`.
+
+- `server/PlayerCharacter.java`, `server/PlayerRules.java`, and `server/PlayerSheets.java` expose player state, check and rest entry points, legacy sheet migration, and persisted state.
+
+### Phase 2
+
+- `rules/spells/` contains `AoEGeometry.java`, `AoETargetResolver.java`, `ConcentrationManager.java`, `Spell.java`, `SpellAccess.java`, `SpellRegistry5e.java`, `SpellSchool.java`, `SpellSlotTable.java`.
+- `combat/` contains `CombatEncounterState.java`, `CombatManager.java`, `CombatantEntry.java`, `CoverRaycaster.java`, `EncounterDifficultyCalculator.java`, `GridMovementTracker.java`, `LightingVisionEvaluator.java`, `MonsterAiDirector.java`, `OpportunityAttackDetector.java`, `ReactionWindowManager.java`, `TurnEconomy.java`.
+
+- `server/TacticalCombat.java` binds the turn engine to Minecraft. `server/MinecraftBattlefield.java` provides collision, light, cover, and terrain.
+- Rule distance uses five feet per block. The encounter keeps primary HP, temporary HP, beast HP, Arcane Ward, and death saves independently. One concentration spell per caster applies scoped effects. Reaction opportunities expire after 3.5 seconds. Paladin Aura of Protection applies the strongest nearby allied aura. A Sorcerer of level 3 or higher can use `/dnd action quicken_spell` to prepare Quickened Spell for the next eligible spell.
+
+### Phase 3
+
+- `entity/` contains `BestiaryPreset.java`, `BestiaryRegistry5e.java`, `BestiaryTurnState.java`, `DiceDisplaySpawner.java`, `DndNpcEntity.java`, `ModEntities.java`, `NpcSpawns.java`, `TriggerOccupancy.java`, `TriggerZoneBlock.java`, `TriggerZoneBlockEntity.java`, `TriggerZoneSpec.java`.
+- `dialogue/` contains `DialogueChoice.java`, `DialogueNbt.java`, `DialogueNode.java`, `DialogueTree.java`, `NpcAttitude.java`.
+- `item/` contains `CharacterFolioItem.java`, `DmMasterWandItem.java`, `DungeonBrushItem.java`, `HealingDraughtItem.java`, `ModItems.java`, `NpcSpawnerWandItem.java`, `PhysicalD20Item.java`, `TriggerZoneWandItem.java`, `WandSelections.java`.
+- `mixin/` contains `EntityScaleMixin.java`, `LivingEntityCombatMixin.java`, `PlayerCharacterMixin.java`, `PlayerMovementLockMixin.java`.
+
+- `server/DndCommands.java`, `server/DialogueSessions.java`, `server/DmMode.java`, and `server/CinematicFreeze.java` handle operator tools, dialogue sessions, possession, temporary party freezes, and door state.
+- Bestiary and appearance fields track on the entity. Dialogue trees persist on the server and the network sends the active node or an authorized editor view.
+- Travel, damage, trigger occupancy, and encounter timing are server-authoritative. Armed traps have independent Perception, Investigation, disarm, and Dexterity save DCs. Use `/dnd investigate <position>` to investigate or a held tripwire hook with `/dnd disarm <position>` to disarm. Configure cinematic ambushes with the trigger-zone editor.
+
+### Phase 4
+
+- `network/` contains `CharacterDraft.java`, `ModPackets.java`, `PacketCodec.java`, `PacketPolicy.java`, `Protocol.java`.
+
+- Every tactical action supplies the current encounter, round, and controlled actor. The server rechecks identity and turn ownership before it mutates state. Reaction responses use an offered, unexpired window for that actor. World editing, possession, and party snapshots require operator level 2.
+
+## Client files
+
+Source paths below are relative to `src/client/java/net/dnd5ecraft/client/`.
+
+### Phase 5A
+
+- `Dnd5eCraftClient.java`, `ClientActions.java`, `ClientDndState.java`, `ClientPacketHandlers.java`, and `keybind/ModKeybinds.java` initialize client features, handle input, and apply synchronized state.
+- `gui/theme/DndUiTheme.java`, `gui/screen/DndScreen.java`, `gui/screen/CharacterSheetScreen.java`, `gui/screen/ReactionPromptScreen.java`, and `gui/hud/CombatHudOverlay.java` define the sheet and combat views. `render/DndNpcEntityRenderer.java` renders tracked NPC appearance.
+- Use **C** for the character sheet, **K** for the spellbook, **R** for a d20 or an offered reaction, **Space** to end a tactical turn, **M** to toggle DM mode, and **N** for the DM console.
+- `net.dnd5ecraft.client` is the only source package that imports Minecraft or Fabric client APIs or Blaze3D. The language files live in the common resource pack so the server can send translatable messages.
+
+### Phase 5B
+
+- `gui/screen/CharacterCreationScreen.java`, `SpellbookScreen.java`, `DialogueScreen.java`, `NpcStudioScreen.java`, `TriggerZoneEditScreen.java`, and `DmMasterConsoleScreen.java` contain the existing screens.
+
+### Phase 6
+
+- `render/` contains `AreaWireframe.java`, `DndNpcEntityRenderer.java`, `FloatingCombatBarRenderer.java`, `Icosahedron.java`, `Spinning3dDieRenderer.java`, `TacticalGridWorldRenderer.java`, `WorldDrawing.java`.
+- `mixin/` contains `CameraRpgMixin.java`, `ClientPlayerMoveClampMixin.java`, `DarkvisionLightmapMixin.java`, `EntityRenderScaleMixin.java`, `KeyboardHandlerMixin.java`, `MinecraftInteractionMixin.java`.
+
+- Exercise the tactical grid and movement path, 3D spell previews, roll animation, NPC scaling, camera, and darkvision in a graphical client after changes to rendering or tactical input.
+
+### Phase 7
+
+- `src/main/resources/assets/dnd-5e-craft/lang/en_us.json` and `ru_ru.json` localize items, spells, classes, skills, conditions, screens, and HUD labels. `src/test/java/net/dnd5ecraft/resources/LocalizationTest.java` verifies key coverage and argument formats.
+- Verify both Mixin configurations, packaged resources, and installer metadata on the remapped JAR. Fabric Mixin reports the explicitly annotated injection handlers as redundant. Keep the annotations required by this project.
